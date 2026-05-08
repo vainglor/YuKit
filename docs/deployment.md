@@ -1,6 +1,6 @@
 # YuKit Deployment Notes
 
-This is the runnable YuKit V1 platform slice. PostgreSQL stores users, sessions, favorites, preferences, and execution history. Redis backs rate limiting and the ARQ worker queue. The first concrete tools are JSON Format and Base64.
+This is the runnable YuKit V1 platform slice. PostgreSQL stores users, sessions, favorites, preferences, and execution history. Redis backs rate limiting and the ARQ worker queue. The first concrete tools are JSON Format, Timestamp, and Base64.
 
 ## Local App
 

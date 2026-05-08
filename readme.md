@@ -1,6 +1,6 @@
 # YuKit 构建与运行指南
 
-YuKit 是一个公网多人使用的工具箱平台。当前版本包含 FastAPI 后端、Vue 3 前端、PostgreSQL 数据模型、Redis 限流与队列骨架、ARQ Worker、GitHub OAuth 接口、邮箱登录预留接口，以及可用工具 `JSON Format` 和 `Base64`。
+YuKit 是一个公网多人使用的工具箱平台。当前版本包含 FastAPI 后端、Vue 3 前端、PostgreSQL 数据模型、Redis 限流与队列骨架、ARQ Worker、GitHub OAuth 接口、邮箱登录预留接口，以及可用工具 `JSON Format`、`Timestamp` 和 `Base64`。
 
 ## 1. 准备环境
 
@@ -240,6 +240,7 @@ python -m alembic upgrade head
 已实现：
 
 - JSON Format 工具
+- Timestamp 时间转换工具
 - Base64 编解码工具
 - 匿名运行公开工具
 - dev login
@@ -256,7 +257,7 @@ python -m alembic upgrade head
 
 后续可继续扩展：
 
-- 更多工具插件，例如 Timestamp、Regex Test
+- 更多工具插件，例如 Regex Test
 - 真实生产域名 HTTPS 配置
 - 管理后台
 - 更完整的异步工具 UI 状态轮询

@@ -1,6 +1,7 @@
 from app.tools.base import BaseTool
 from app.tools.base64_codec import Base64CodecTool
 from app.tools.json_format import JsonFormatTool
+from app.tools.timestamp import TimestampTool
 
 
 class ToolRegistry:
@@ -14,7 +15,7 @@ class ToolRegistry:
         return self._tools.get(name)
 
 
-_registry = ToolRegistry([JsonFormatTool(), Base64CodecTool()])
+_registry = ToolRegistry([JsonFormatTool(), TimestampTool(), Base64CodecTool()])
 
 
 def get_tool_registry() -> ToolRegistry:

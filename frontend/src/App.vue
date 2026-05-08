@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { runBase64Codec, type Base64RunOptions } from './api/base64'
+import { runTimestampConverter, type TimestampRunOptions } from './api/timestamp'
 import { ApiError, runJsonFormat, type JsonRunOptions } from './api/tools'
 import {
   buildPreferencesPayload,
@@ -42,6 +43,9 @@ const base64Options = ref<Base64RunOptions>({
   mode: 'encode',
   charset: 'utf-8'
 })
+const timestampOptions = ref<TimestampRunOptions>({
+  mode: 'from-unix'
+})
 
 const tools = computed(() => [
   {
@@ -58,9 +62,9 @@ const tools = computed(() => [
     glyph: 'T',
     title: t('tools.timestamp.title'),
     meta: t('tools.timestamp.meta'),
-    active: false,
-    favorite: false,
-    enabled: false
+    active: selectedTool.value === 'timestamp',
+    favorite: favorites.value.includes('timestamp'),
+    enabled: true
   },
   {
     name: 'base64' as const,
@@ -83,15 +87,25 @@ const tools = computed(() => [
 ])
 
 const currentToolTitle = computed(() =>
-  selectedTool.value === 'base64' ? t('tools.base64.title') : t('tools.jsonFormat.title')
+  selectedTool.value === 'base64'
+    ? t('tools.base64.title')
+    : selectedTool.value === 'timestamp'
+      ? t('tools.timestamp.title')
+      : t('tools.jsonFormat.title')
 )
 const currentToolKicker = computed(() =>
-  selectedTool.value === 'base64' ? t('workspace.base64Kicker') : t('workspace.jsonKicker')
+  selectedTool.value === 'base64'
+    ? t('workspace.base64Kicker')
+    : selectedTool.value === 'timestamp'
+      ? t('workspace.timestampKicker')
+      : t('workspace.jsonKicker')
 )
 const currentToolDescription = computed(() =>
   selectedTool.value === 'base64'
     ? t('workspace.base64Description')
-    : t('workspace.jsonDescription')
+    : selectedTool.value === 'timestamp'
+      ? t('workspace.timestampDescription')
+      : t('workspace.jsonDescription')
 )
 const inputBytes = computed(() => new TextEncoder().encode(input.value).length)
 const outputBytes = computed(() => new TextEncoder().encode(output.value).length)
@@ -107,7 +121,11 @@ const stateLabel = computed(() => {
 })
 const recentExecutions = computed(() => executions.value.slice(0, 5))
 const outputPlaceholder = computed(() =>
-  selectedTool.value === 'base64' ? t('placeholders.base64Output') : t('placeholders.rawOutput')
+  selectedTool.value === 'base64'
+    ? t('placeholders.base64Output')
+    : selectedTool.value === 'timestamp'
+      ? t('placeholders.timestampOutput')
+      : t('placeholders.rawOutput')
 )
 const treeOutput = computed(() => {
   if (!output.value) return ''
@@ -198,6 +216,14 @@ async function runTool() {
       const response = await runBase64Codec(input.value, base64Options.value)
       output.value = response.result.text
       durationMs.value = response.duration_ms
+    } else if (selectedTool.value === 'timestamp') {
+      const response = await runTimestampConverter(input.value, timestampOptions.value)
+      output.value = [
+        `${t('output.isoUtc')}: ${response.result.iso_utc}`,
+        `${t('output.unixSeconds')}: ${response.result.unix_seconds}`,
+        `${t('output.unixMilliseconds')}: ${response.result.unix_milliseconds}`
+      ].join('\n')
+      durationMs.value = response.duration_ms
     } else {
       const response = await runJsonFormat(input.value, options.value)
       output.value = response.result.formatted
@@ -233,12 +259,20 @@ function clearInput() {
 }
 
 function useSampleInput() {
-  input.value = selectedTool.value === 'base64' ? 'Hello, YuKit' : '{\n  "hello": "YuKit"\n}'
+  if (selectedTool.value === 'base64') {
+    input.value = 'Hello, YuKit'
+  } else if (selectedTool.value === 'timestamp') {
+    input.value = timestampOptions.value.mode === 'from-unix' ? '1700000000' : '2023-11-14T22:13:20Z'
+  } else {
+    input.value = '{\n  "hello": "YuKit"\n}'
+  }
 }
 
 function resetOptions() {
   if (selectedTool.value === 'base64') {
     base64Options.value = { mode: 'encode', charset: 'utf-8' }
+  } else if (selectedTool.value === 'timestamp') {
+    timestampOptions.value = { mode: 'from-unix' }
   } else {
     options.value = { indent: 2, sortKeys: true, ensureAscii: false }
   }
@@ -440,6 +474,7 @@ async function copyOutput() {
             </template>
 
             <template v-else>
+            <template v-if="selectedTool === 'base64'">
             <label class="field">
               <span>{{ t('options.codecMode') }}</span>
               <select v-model="base64Options.mode">
@@ -454,6 +489,17 @@ async function copyOutput() {
                 <option value="utf-8">UTF-8</option>
               </select>
             </label>
+            </template>
+
+            <template v-else>
+            <label class="field">
+              <span>{{ t('options.timestampMode') }}</span>
+              <select v-model="timestampOptions.mode" @change="useSampleInput">
+                <option value="from-unix">{{ t('options.fromUnix') }}</option>
+                <option value="from-iso">{{ t('options.fromIso') }}</option>
+              </select>
+            </label>
+            </template>
             </template>
 
             <div class="history-note">
