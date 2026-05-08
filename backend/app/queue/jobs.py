@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from sqlalchemy import select
@@ -17,6 +18,9 @@ async def run_tool_job(
     async with sessionmaker() as db:
         result = await db.execute(select(ToolExecution).where(ToolExecution.id == execution_id))
         execution = result.scalar_one()
+        if execution.status == "canceled":
+            return
+
         tool = get_tool_registry().get(execution.tool_name)
         if tool is None:
             execution.status = "failed"
@@ -32,7 +36,15 @@ async def run_tool_job(
         try:
             input_data = tool.input_model.model_validate(input_payload)
             options = tool.option_model.model_validate(options_payload)
-            output = await tool.run(input_data, options)
+            output = await asyncio.wait_for(
+                tool.run(input_data, options),
+                timeout=tool.timeout_seconds,
+            )
+        except TimeoutError:
+            execution.status = "timed_out"
+            execution.error_code = "tool_timed_out"
+            execution.error_message = "Tool execution timed out"
+            execution.duration_ms = int((time.perf_counter() - started) * 1000)
         except Exception as exc:
             execution.status = "failed"
             execution.error_code = "tool_failed"

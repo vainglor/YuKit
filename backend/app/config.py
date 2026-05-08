@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,8 +10,8 @@ class Settings(BaseSettings):
 
     environment: Literal["local", "test", "production"] = "local"
     app_name: str = "YuKit"
-    public_base_url: AnyHttpUrl = "http://localhost:5173"
-    api_base_url: AnyHttpUrl = "http://localhost:8000"
+    public_base_url: str = "http://localhost:5173"
+    api_base_url: str = "http://localhost:8000"
     database_url: str = ""
     redis_url: str = ""
     session_secret: str = Field(default="local-dev-session-secret-change-me", min_length=32)
@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     github_oauth_token_url: str = "https://github.com/login/oauth/access_token"
     github_api_user_url: str = "https://api.github.com/user"
     github_api_emails_url: str = "https://api.github.com/user/emails"
+
+    @property
+    def effective_docs_enabled(self) -> bool:
+        return self.environment != "production" and self.docs_enabled
 
 
 @lru_cache

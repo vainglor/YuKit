@@ -22,6 +22,17 @@ export type ExecutionSummary = {
   result: unknown
 }
 
+export type ExecutionDetail = {
+  id: string
+  tool: string
+  status: string
+  mode: string
+  duration_ms: number | null
+  result: unknown
+  error_code: string
+  error_message: string
+}
+
 export function apiBaseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
 }
@@ -51,6 +62,10 @@ export function buildPreferencesPayload(options: {
     },
     ui: {}
   }
+}
+
+export function isTerminalExecutionStatus(status: string): boolean {
+  return ['succeeded', 'failed', 'timed_out', 'canceled'].includes(status)
 }
 
 export async function fetchMe(): Promise<UserProfile | null> {
@@ -98,4 +113,16 @@ export async function savePreferences(preferences: Preferences): Promise<Prefere
 export async function fetchExecutions(): Promise<ExecutionSummary[]> {
   const body = await request<{ executions: ExecutionSummary[] }>('/me/executions')
   return body.executions
+}
+
+export async function fetchExecution(executionId: string): Promise<ExecutionDetail> {
+  const body = await request<{ execution: ExecutionDetail }>(`/executions/${executionId}`)
+  return body.execution
+}
+
+export async function cancelExecution(executionId: string): Promise<ExecutionDetail> {
+  const body = await request<{ execution: ExecutionDetail }>(`/executions/${executionId}/cancel`, {
+    method: 'POST'
+  })
+  return body.execution
 }

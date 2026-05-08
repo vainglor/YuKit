@@ -25,7 +25,7 @@ class Base64CodecOutput(BaseModel):
     size_bytes: int
 
 
-class Base64CodecTool(BaseTool):
+class Base64CodecTool(BaseTool[Base64CodecInput, Base64CodecOptions, Base64CodecOutput]):
     name = "base64"
     label = "Base64"
     description = "Encode plain text to Base64 or decode Base64 back to text."

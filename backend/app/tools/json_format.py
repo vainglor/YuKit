@@ -27,7 +27,7 @@ class JsonFormatOutput(BaseModel):
     size_bytes: int
 
 
-class JsonFormatTool(BaseTool):
+class JsonFormatTool(BaseTool[JsonFormatInput, JsonFormatOptions, JsonFormatOutput]):
     name = "json-format"
     label = "JSON Format"
     description = "Validate, format, and normalize JSON with predictable options."

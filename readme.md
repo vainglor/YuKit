@@ -1,6 +1,6 @@
 # YuKit 构建与运行指南
 
-YuKit 是一个公网多人使用的工具箱平台。当前版本包含 FastAPI 后端、Vue 3 前端、PostgreSQL 数据模型、Redis 限流与队列骨架、ARQ Worker、GitHub OAuth 接口、邮箱登录预留接口，以及可用工具 `JSON Format`、`Timestamp` 和 `Base64`。
+YuKit 是一个公网多人使用的工具箱平台。当前版本包含 FastAPI 后端、Vue 3 前端、PostgreSQL 数据模型、Redis 限流与队列骨架、ARQ Worker、GitHub OAuth 接口、邮箱登录预留接口，以及可用工具 `JSON Format`、`Timestamp`、`Base64`、`Regex Test` 和登录后异步执行的 `Text Hash`。
 
 ## 1. 准备环境
 
@@ -242,6 +242,8 @@ python -m alembic upgrade head
 - JSON Format 工具
 - Timestamp 时间转换工具
 - Base64 编解码工具
+- Regex Test 正则测试工具
+- Text Hash 异步哈希工具
 - 匿名运行公开工具
 - dev login
 - GitHub OAuth 接口
@@ -251,13 +253,13 @@ python -m alembic upgrade head
 - 执行历史
 - PostgreSQL/SQLite 数据模型与迁移
 - Redis 限流
-- ARQ Worker 队列骨架
+- ARQ Worker 队列执行、状态轮询、超时和取消接口
 - Caddy + Docker Compose 部署骨架
 - GitHub Actions CI
 
 后续可继续扩展：
 
-- 更多工具插件，例如 Regex Test
+- 更多工具插件，例如 URL、CSV、Hash 或文件解析工具
 - 真实生产域名 HTTPS 配置
 - 管理后台
 - 更完整的异步工具 UI 状态轮询

@@ -15,7 +15,7 @@ class ToolExecutionMode(StrEnum):
     ASYNC = "async"
 
 
-class BaseTool(ABC):
+class BaseTool[InputModelT: BaseModel, OptionModelT: BaseModel, OutputModelT: BaseModel](ABC):
     name: str
     label: str
     description: str
@@ -23,10 +23,11 @@ class BaseTool(ABC):
     access_level: ToolAccessLevel
     execution_mode: ToolExecutionMode
     risk_level: str
-    input_model: type[BaseModel]
-    option_model: type[BaseModel]
-    output_model: type[BaseModel]
+    input_model: type[InputModelT]
+    option_model: type[OptionModelT]
+    output_model: type[OutputModelT]
     allow_history_input_storage: bool = False
+    timeout_seconds: float = 10
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -44,5 +45,5 @@ class BaseTool(ABC):
         }
 
     @abstractmethod
-    async def run(self, input_data: BaseModel, options: BaseModel) -> BaseModel:
+    async def run(self, input_data: InputModelT, options: OptionModelT) -> OutputModelT:
         raise NotImplementedError

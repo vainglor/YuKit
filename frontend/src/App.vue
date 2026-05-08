@@ -2,15 +2,19 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { runBase64Codec, type Base64RunOptions } from './api/base64'
+import { runRegexTest, type RegexFlag, type RegexRunOptions } from './api/regex'
+import { runTextHash, type TextHashRunOptions } from './api/textHash'
 import { runTimestampConverter, type TimestampRunOptions } from './api/timestamp'
 import { ApiError, runJsonFormat, type JsonRunOptions } from './api/tools'
 import {
   buildPreferencesPayload,
+  fetchExecution,
   devLogin,
   fetchExecutions,
   fetchFavorites,
   fetchMe,
   fetchPreferences,
+  isTerminalExecutionStatus,
   logout,
   savePreferences,
   setFavorite,
@@ -20,8 +24,8 @@ import {
 import { t, toggleLocale } from './i18n'
 
 type OutputTab = 'raw' | 'tree' | 'error'
-type RunState = 'idle' | 'running' | 'succeeded' | 'failed'
-type ToolName = 'json-format' | 'base64' | 'timestamp' | 'regex-test'
+type RunState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'canceled'
+type ToolName = 'json-format' | 'base64' | 'timestamp' | 'regex-test' | 'text-hash'
 
 const selectedTool = ref<ToolName>('json-format')
 const input = ref('{"b":1,"a":{"d":4,"c":3}}')
@@ -46,6 +50,23 @@ const base64Options = ref<Base64RunOptions>({
 const timestampOptions = ref<TimestampRunOptions>({
   mode: 'from-unix'
 })
+const regexOptions = ref<RegexRunOptions>({
+  pattern: String.raw`\b\w+\b`,
+  flags: [],
+  maxMatches: 50,
+  timeoutMs: 50
+})
+const textHashOptions = ref<TextHashRunOptions>({
+  algorithm: 'sha256'
+})
+
+const regexFlagOptions: Array<{ value: RegexFlag; labelKey: string }> = [
+  { value: 'ignorecase', labelKey: 'options.flagIgnoreCase' },
+  { value: 'multiline', labelKey: 'options.flagMultiline' },
+  { value: 'dotall', labelKey: 'options.flagDotall' },
+  { value: 'ascii', labelKey: 'options.flagAscii' },
+  { value: 'verbose', labelKey: 'options.flagVerbose' }
+]
 
 const tools = computed(() => [
   {
@@ -80,9 +101,18 @@ const tools = computed(() => [
     glyph: '.*',
     title: t('tools.regex.title'),
     meta: t('tools.regex.meta'),
-    active: false,
-    favorite: false,
-    enabled: false
+    active: selectedTool.value === 'regex-test',
+    favorite: favorites.value.includes('regex-test'),
+    enabled: true
+  },
+  {
+    name: 'text-hash' as const,
+    glyph: '#',
+    title: t('tools.textHash.title'),
+    meta: t('tools.textHash.meta'),
+    active: selectedTool.value === 'text-hash',
+    favorite: favorites.value.includes('text-hash'),
+    enabled: true
   }
 ])
 
@@ -91,21 +121,39 @@ const currentToolTitle = computed(() =>
     ? t('tools.base64.title')
     : selectedTool.value === 'timestamp'
       ? t('tools.timestamp.title')
-      : t('tools.jsonFormat.title')
+      : selectedTool.value === 'regex-test'
+        ? t('tools.regex.title')
+        : selectedTool.value === 'text-hash'
+          ? t('tools.textHash.title')
+          : t('tools.jsonFormat.title')
 )
 const currentToolKicker = computed(() =>
   selectedTool.value === 'base64'
     ? t('workspace.base64Kicker')
     : selectedTool.value === 'timestamp'
       ? t('workspace.timestampKicker')
-      : t('workspace.jsonKicker')
+      : selectedTool.value === 'regex-test'
+        ? t('workspace.regexKicker')
+        : selectedTool.value === 'text-hash'
+          ? t('workspace.textHashKicker')
+          : t('workspace.jsonKicker')
 )
 const currentToolDescription = computed(() =>
   selectedTool.value === 'base64'
     ? t('workspace.base64Description')
     : selectedTool.value === 'timestamp'
       ? t('workspace.timestampDescription')
-      : t('workspace.jsonDescription')
+      : selectedTool.value === 'regex-test'
+        ? t('workspace.regexDescription')
+        : selectedTool.value === 'text-hash'
+          ? t('workspace.textHashDescription')
+          : t('workspace.jsonDescription')
+)
+const currentAccessBadge = computed(() =>
+  selectedTool.value === 'text-hash' ? t('badges.authenticated') : t('badges.public')
+)
+const currentModeBadge = computed(() =>
+  selectedTool.value === 'text-hash' ? t('badges.async') : t('badges.sync')
 )
 const inputBytes = computed(() => new TextEncoder().encode(input.value).length)
 const outputBytes = computed(() => new TextEncoder().encode(output.value).length)
@@ -114,9 +162,12 @@ const isSignedIn = computed(() => currentUser.value !== null)
 const favoriteCurrentTool = computed(() => favorites.value.includes(selectedTool.value))
 const displayName = computed(() => currentUser.value?.display_name || currentUser.value?.email || '')
 const stateLabel = computed(() => {
+  if (runState.value === 'queued') return t('status.queued')
   if (runState.value === 'running') return t('status.running')
   if (runState.value === 'succeeded') return `${t('status.succeeded')} · ${durationMs.value ?? 0}ms`
   if (runState.value === 'failed') return t('status.failed')
+  if (runState.value === 'timed_out') return t('status.timedOut')
+  if (runState.value === 'canceled') return t('status.canceled')
   return t('status.ready')
 })
 const recentExecutions = computed(() => executions.value.slice(0, 5))
@@ -125,7 +176,11 @@ const outputPlaceholder = computed(() =>
     ? t('placeholders.base64Output')
     : selectedTool.value === 'timestamp'
       ? t('placeholders.timestampOutput')
-      : t('placeholders.rawOutput')
+      : selectedTool.value === 'regex-test'
+        ? t('placeholders.regexOutput')
+        : selectedTool.value === 'text-hash'
+          ? t('placeholders.textHashOutput')
+          : t('placeholders.rawOutput')
 )
 const treeOutput = computed(() => {
   if (!output.value) return ''
@@ -212,7 +267,10 @@ async function runTool() {
   activeTab.value = 'raw'
 
   try {
-    if (selectedTool.value === 'base64') {
+    if (selectedTool.value === 'text-hash') {
+      await runAsyncTextHash()
+      return
+    } else if (selectedTool.value === 'base64') {
       const response = await runBase64Codec(input.value, base64Options.value)
       output.value = response.result.text
       durationMs.value = response.duration_ms
@@ -224,6 +282,10 @@ async function runTool() {
         `${t('output.unixMilliseconds')}: ${response.result.unix_milliseconds}`
       ].join('\n')
       durationMs.value = response.duration_ms
+    } else if (selectedTool.value === 'regex-test') {
+      const response = await runRegexTest(input.value, regexOptions.value)
+      output.value = JSON.stringify(response.result, null, 2)
+      durationMs.value = response.duration_ms
     } else {
       const response = await runJsonFormat(input.value, options.value)
       output.value = response.result.formatted
@@ -232,6 +294,8 @@ async function runTool() {
     runState.value = 'succeeded'
     if (currentUser.value && selectedTool.value === 'json-format') {
       await savePreferences(buildPreferencesPayload(options.value))
+    }
+    if (currentUser.value) {
       executions.value = await fetchExecutions()
     }
   } catch (error) {
@@ -241,6 +305,47 @@ async function runTool() {
     runState.value = 'failed'
     errorMessage.value = error instanceof ApiError ? error.message : t('errors.unexpectedToolRunFailure')
   }
+}
+
+async function runAsyncTextHash() {
+  if (!currentUser.value) {
+    await signIn()
+  }
+  if (!currentUser.value) {
+    throw new Error(t('errors.authRequired'))
+  }
+
+  const response = await runTextHash(input.value, textHashOptions.value)
+  runState.value = 'queued'
+  output.value = `${t('status.queued')} · ${response.execution_id}`
+
+  const execution = await pollExecution(response.execution_id)
+  durationMs.value = execution.duration_ms
+
+  if (execution.status === 'succeeded') {
+    output.value = JSON.stringify(execution.result, null, 2)
+    runState.value = 'succeeded'
+    executions.value = await fetchExecutions()
+    return
+  }
+
+  output.value = ''
+  activeTab.value = 'error'
+  runState.value = execution.status as RunState
+  errorMessage.value = execution.error_message || execution.error_code || execution.status
+  executions.value = await fetchExecutions()
+}
+
+async function pollExecution(executionId: string) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const execution = await fetchExecution(executionId)
+    runState.value = execution.status === 'queued' ? 'queued' : 'running'
+    if (isTerminalExecutionStatus(execution.status)) {
+      return execution
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000))
+  }
+  throw new Error(t('errors.executionPollingTimedOut'))
 }
 
 function selectTool(toolName: ToolName, enabled: boolean) {
@@ -263,6 +368,11 @@ function useSampleInput() {
     input.value = 'Hello, YuKit'
   } else if (selectedTool.value === 'timestamp') {
     input.value = timestampOptions.value.mode === 'from-unix' ? '1700000000' : '2023-11-14T22:13:20Z'
+  } else if (selectedTool.value === 'regex-test') {
+    input.value = 'alpha-100\nbeta-205\ngamma'
+    regexOptions.value.pattern = String.raw`(?P<name>[a-z]+)-(\d+)`
+  } else if (selectedTool.value === 'text-hash') {
+    input.value = 'YuKit'
   } else {
     input.value = '{\n  "hello": "YuKit"\n}'
   }
@@ -273,9 +383,24 @@ function resetOptions() {
     base64Options.value = { mode: 'encode', charset: 'utf-8' }
   } else if (selectedTool.value === 'timestamp') {
     timestampOptions.value = { mode: 'from-unix' }
+  } else if (selectedTool.value === 'regex-test') {
+    regexOptions.value = {
+      pattern: String.raw`\b\w+\b`,
+      flags: [],
+      maxMatches: 50,
+      timeoutMs: 50
+    }
+  } else if (selectedTool.value === 'text-hash') {
+    textHashOptions.value = { algorithm: 'sha256' }
   } else {
     options.value = { indent: 2, sortKeys: true, ensureAscii: false }
   }
+}
+
+function toggleRegexFlag(flag: RegexFlag) {
+  regexOptions.value.flags = regexOptions.value.flags.includes(flag)
+    ? regexOptions.value.flags.filter((item) => item !== flag)
+    : [...regexOptions.value.flags, flag]
 }
 
 async function copyOutput() {
@@ -377,16 +502,28 @@ async function copyOutput() {
           >
             {{ favoriteCurrentTool ? '★' : '☆' }}
           </button>
-          <button class="primary-button run-button" type="button" :disabled="runState === 'running'" @click="runTool">
-            {{ runState === 'running' ? t('actions.running') : t('actions.run') }}
+          <button
+            class="primary-button run-button"
+            type="button"
+            :disabled="runState === 'running' || runState === 'queued'"
+            @click="runTool"
+          >
+            {{ runState === 'running' || runState === 'queued' ? t('actions.running') : t('actions.run') }}
           </button>
         </div>
       </section>
 
       <section class="meta-row" :aria-label="t('aria.executionStatus')">
-        <span class="badge">{{ t('badges.public') }}</span>
-        <span class="badge">{{ t('badges.sync') }}</span>
-        <span class="badge" :class="{ good: runState === 'succeeded', danger: runState === 'failed' }">
+        <span class="badge">{{ currentAccessBadge }}</span>
+        <span class="badge">{{ currentModeBadge }}</span>
+        <span
+          class="badge"
+          :class="{
+            good: runState === 'succeeded',
+            warning: runState === 'queued' || runState === 'running',
+            danger: runState === 'failed' || runState === 'timed_out' || runState === 'canceled'
+          }"
+        >
           {{ stateLabel }}
         </span>
         <span class="badge">{{ t('badges.inputNotStored') }}</span>
@@ -473,8 +610,7 @@ async function copyOutput() {
             </label>
             </template>
 
-            <template v-else>
-            <template v-if="selectedTool === 'base64'">
+            <template v-else-if="selectedTool === 'base64'">
             <label class="field">
               <span>{{ t('options.codecMode') }}</span>
               <select v-model="base64Options.mode">
@@ -491,7 +627,7 @@ async function copyOutput() {
             </label>
             </template>
 
-            <template v-else>
+            <template v-else-if="selectedTool === 'timestamp'">
             <label class="field">
               <span>{{ t('options.timestampMode') }}</span>
               <select v-model="timestampOptions.mode" @change="useSampleInput">
@@ -500,6 +636,62 @@ async function copyOutput() {
               </select>
             </label>
             </template>
+
+            <template v-else-if="selectedTool === 'text-hash'">
+            <label class="field">
+              <span>{{ t('options.hashAlgorithm') }}</span>
+              <select v-model="textHashOptions.algorithm">
+                <option value="sha256">SHA-256</option>
+                <option value="sha512">SHA-512</option>
+                <option value="md5">MD5</option>
+              </select>
+            </label>
+            </template>
+
+            <template v-else>
+            <label class="field">
+              <span>{{ t('options.regexPattern') }}</span>
+              <textarea
+                v-model="regexOptions.pattern"
+                class="pattern-input"
+                rows="4"
+                spellcheck="false"
+                :aria-label="t('options.regexPattern')"
+              />
+            </label>
+
+            <fieldset class="field flag-group">
+              <legend>{{ t('options.regexFlags') }}</legend>
+              <label
+                v-for="flag in regexFlagOptions"
+                :key="flag.value"
+                class="switch-row compact"
+              >
+                <span>
+                  <strong>{{ t(flag.labelKey) }}</strong>
+                </span>
+                <input
+                  type="checkbox"
+                  :checked="regexOptions.flags.includes(flag.value)"
+                  @change="toggleRegexFlag(flag.value)"
+                />
+              </label>
+            </fieldset>
+
+            <label class="field">
+              <span>{{ t('options.maxMatches') }}</span>
+              <input v-model.number="regexOptions.maxMatches" min="1" max="200" type="number" />
+            </label>
+
+            <label class="field">
+              <span>{{ t('options.timeoutMs') }}</span>
+              <select v-model.number="regexOptions.timeoutMs">
+                <option :value="25">25ms</option>
+                <option :value="50">50ms</option>
+                <option :value="100">100ms</option>
+                <option :value="250">250ms</option>
+              </select>
+            </label>
             </template>
 
             <div class="history-note">

@@ -1,16 +1,25 @@
 services:
   caddy:
     image: caddy:2-alpine
+    environment:
+      YUKIT_SITE_ADDRESS: ${YUKIT_SITE_ADDRESS:-:80}
     ports:
-      - "8080:80"
+      - "${YUKIT_HTTP_PORT:-8080}:80"
+      - "${YUKIT_HTTPS_PORT:-8443}:443"
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./frontend/dist:/srv/frontend:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/api/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
   api:
     build: .
@@ -24,9 +33,20 @@ services:
       YUKIT_REDIS_URL: redis://redis:6379/0
       YUKIT_DEV_AUTH_ENABLED: "true"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)\""
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
   worker:
     build: .
@@ -38,8 +58,10 @@ services:
       YUKIT_DATABASE_URL: postgresql+asyncpg://yukit:yukit@postgres:5432/yukit
       YUKIT_REDIS_URL: redis://redis:6379/0
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   postgres:
@@ -51,6 +73,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yukit -d yukit"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -58,6 +85,43 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build: .
+    profiles: ["ops"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      YUKIT_DATABASE_URL: postgresql+asyncpg://yukit:yukit@postgres:5432/yukit
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "cd /app/backend && alembic upgrade head"
+    restart: "no"
+
+  postgres-backup:
+    image: postgres:17-alpine
+    profiles: ["ops"]
+    environment:
+      PGPASSWORD: yukit
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      [
+        "sh",
+        "-c",
+        "pg_dump -h postgres -U yukit yukit > /backups/yukit-$$(date +%F-%H%M%S).sql"
+      ]
+    restart: "no"
 
 volumes:
   postgres_data:

@@ -2,7 +2,7 @@ import secrets
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,18 +103,32 @@ async def github_start(response: Response) -> RedirectResponse:
         }
     )
     response = RedirectResponse(str(url))
-    response.set_cookie("yukit_oauth_state", state, httponly=True, samesite="lax", path="/")
+    response.set_cookie(
+        "yukit_oauth_state",
+        state,
+        httponly=True,
+        secure=settings.environment == "production",
+        samesite="lax",
+        path="/",
+    )
     return response
 
 
 @router.get("/github/callback")
 async def github_callback(
-    response: Response,
+    request: Request,
     code: str = Query(...),
     state: str = Query(...),
     db: AsyncSession | None = Depends(get_db_session),
 ) -> RedirectResponse:
     settings = get_settings()
+    expected_state = request.cookies.get("yukit_oauth_state")
+    if not expected_state or not secrets.compare_digest(expected_state, state):
+        raise ApiError(
+            status_code=401,
+            code="oauth_state_mismatch",
+            message="OAuth state validation failed.",
+        )
     if db is None:
         raise ApiError(
             status_code=503,

@@ -13,7 +13,8 @@ class ApiError(Exception):
     detail: dict[str, Any] | None = None
 
 
-async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
+async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", "unknown")
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -21,6 +22,7 @@ async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
                 "code": exc.code,
                 "message": exc.message,
                 "detail": exc.detail or {},
+                "request_id": request_id,
             }
         },
     )

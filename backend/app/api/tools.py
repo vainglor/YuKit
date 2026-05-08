@@ -3,7 +3,7 @@ from hashlib import sha256
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import optional_current_user
@@ -92,8 +92,15 @@ async def run_tool(
         RateLimit(max_requests=60 if user else 30, window_seconds=60),
     )
 
-    input_data = tool.input_model.model_validate(payload.input)
-    options = tool.option_model.model_validate(payload.options)
+    try:
+        input_data = tool.input_model.model_validate(payload.input)
+        options = tool.option_model.model_validate(payload.options)
+    except ValidationError as exc:
+        raise ApiError(
+            status_code=422,
+            code="invalid_input",
+            message="Invalid tool input or options.",
+        ) from exc
 
     if tool.execution_mode == ToolExecutionMode.ASYNC:
         execution = await _create_execution(

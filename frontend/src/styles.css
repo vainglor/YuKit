@@ -36,6 +36,7 @@ body {
 
 button,
 select,
+input,
 textarea {
   font: inherit;
 }
@@ -51,6 +52,7 @@ button:disabled {
 }
 
 button:focus-visible,
+input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.25);
@@ -375,6 +377,12 @@ p {
   background: var(--success-soft);
 }
 
+.badge.warning {
+  color: var(--warning);
+  border-color: #f7d08a;
+  background: #fffbeb;
+}
+
 .badge.danger {
   color: var(--danger);
   border-color: var(--danger-border);
@@ -513,6 +521,43 @@ select {
   color: #334155;
   background: var(--surface);
   font-size: 13px;
+}
+
+input[type="number"],
+.pattern-input {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: #334155;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+input[type="number"] {
+  height: 34px;
+  padding: 0 10px;
+}
+
+.pattern-input {
+  min-height: 84px;
+  resize: vertical;
+  padding: 9px 10px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  line-height: 18px;
+}
+
+.flag-group {
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.flag-group legend {
+  padding: 0;
+}
+
+.switch-row.compact {
+  min-height: 24px;
 }
 
 .switch-row {

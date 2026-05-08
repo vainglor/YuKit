@@ -32,6 +32,19 @@ def test_json_tool_run_returns_sanitized_error(test_app) -> None:
     assert "line 1 column 7" in body["error"]["message"]
 
 
+def test_tool_run_returns_sanitized_schema_validation_error(test_app) -> None:
+    client = TestClient(test_app)
+    response = client.post(
+        "/api/tools/json-format/runs",
+        json={"input": {"text": ""}, "options": {"indent": 2}},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "invalid_input"
+    assert body["error"]["message"] == "Invalid tool input or options."
+
+
 def test_tools_metadata_exposes_json_tool(test_app) -> None:
     client = TestClient(test_app)
 

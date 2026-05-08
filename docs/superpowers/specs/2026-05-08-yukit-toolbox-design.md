@@ -280,6 +280,7 @@ The first implementation can enforce timeouts and size limits in Python. The con
 | GET | `/api/tools/{name}` | Public | Get one tool metadata |
 | POST | `/api/tools/{name}/runs` | Mixed | Run sync tool or enqueue async job |
 | GET | `/api/executions/{id}` | Owner or token | Read execution status/result |
+| POST | `/api/executions/{id}/cancel` | Owner | Cancel a queued or running execution |
 | GET | `/api/me/favorites` | Authenticated | List favorite tools |
 | PUT | `/api/me/favorites/{tool}` | Authenticated | Add favorite |
 | DELETE | `/api/me/favorites/{tool}` | Authenticated | Remove favorite |
@@ -788,6 +789,7 @@ container:
 | Timestamp | Public | Sync | Unix timestamp or ISO string | Output format |
 | Base64 | Public | Sync | Text | Encode/decode, charset |
 | Regex Test | Public initially; authenticated if advanced mode grows | Sync with strict timeout | Text + pattern | Flags |
+| Text Hash | Authenticated | Async | Text | Algorithm |
 
 Future tools that fetch URLs, parse files, process large inputs, or perform batch operations should be `authenticated` + `async` by default.
 

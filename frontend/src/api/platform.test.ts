@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildPreferencesPayload } from './platform'
+import { buildPreferencesPayload, isTerminalExecutionStatus } from './platform'
 
 describe('buildPreferencesPayload', () => {
   it('stores JSON formatter options under the tool name', () => {
@@ -12,5 +12,16 @@ describe('buildPreferencesPayload', () => {
       },
       ui: {}
     })
+  })
+})
+
+describe('isTerminalExecutionStatus', () => {
+  it('distinguishes pollable async statuses from terminal statuses', () => {
+    expect(isTerminalExecutionStatus('queued')).toBe(false)
+    expect(isTerminalExecutionStatus('running')).toBe(false)
+    expect(isTerminalExecutionStatus('succeeded')).toBe(true)
+    expect(isTerminalExecutionStatus('failed')).toBe(true)
+    expect(isTerminalExecutionStatus('timed_out')).toBe(true)
+    expect(isTerminalExecutionStatus('canceled')).toBe(true)
   })
 })

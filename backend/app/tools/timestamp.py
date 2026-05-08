@@ -27,7 +27,7 @@ class TimestampOutput(BaseModel):
     iso_utc: str
 
 
-class TimestampTool(BaseTool):
+class TimestampTool(BaseTool[TimestampInput, TimestampOptions, TimestampOutput]):
     name = "timestamp"
     label = "Timestamp"
     description = "Convert between Unix seconds and ISO-8601 UTC datetime strings."
