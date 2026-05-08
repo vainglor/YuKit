@@ -157,7 +157,7 @@ class BaseTool(Protocol):
         options: BaseModel,
         context: ToolExecutionContext,
     ) -> BaseModel:
-        ...
+        raise NotImplementedError
 ```
 
 The registry exposes metadata to the frontend and validates execution requests. The frontend should render forms from schema metadata and avoid hard-coded per-tool pages in v1.
@@ -295,7 +295,7 @@ Successful responses should use typed payloads. Errors should be consistent:
   "error": {
     "code": "RATE_LIMITED",
     "message": "Too many requests. Please try again later.",
-    "request_id": "req_..."
+    "request_id": "req_7a1b2c"
   }
 }
 ```
@@ -367,13 +367,54 @@ tool_executions
 
 ## Frontend Design
 
-### Layout
+### Product Direction
 
-- Header: app name, auth state, GitHub link, theme toggle.
-- Sidebar: search, tags, favorites for logged-in users, recent tools.
-- Workspace: tool header, input form, dynamic options form, run button, output/result area.
-- History drawer/page: authenticated users can view previous executions.
-- Mobile: sidebar collapses into a drawer; workspace remains the primary surface.
+The frontend direction is **Quiet Utility Workspace**: a low-distraction, highly readable tool workspace for repeat use. It should not feel like a marketing landing page, and it should not copy a full IDE. The interface sits between a developer productivity tool and a public utility platform:
+
+- Fast to scan and use repeatedly.
+- Calm, neutral, and content-first.
+- Structured enough for logged-in features such as favorites, history, preferences, and async job state.
+- Friendly enough for anonymous public users who only want to run a tool quickly.
+
+The default first screen is the working surface, not a hero page.
+
+### Desktop Layout
+
+Desktop uses a three-zone workspace:
+
+- **Top bar, 56px**: brand mark, global command/search entry, help/theme controls, auth state.
+- **Left sidebar, 248-264px**: tool discovery, tag filters, favorites, recent tools, and lightweight system status.
+- **Main workspace**: selected tool header, execution status strip, input/output panels, and a right-side options inspector.
+
+The primary desktop tool page layout:
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│ YuKit        Global search / command menu        Help Theme Sign in │
+├───────────────┬────────────────────────────────────────────────────┤
+│ Discover      │ JSON Format                         Favorite  Run   │
+│ Tags          │ Developer · Format                                  │
+│ Favorites     │ Public · Sync · Succeeded · Input not stored         │
+│ Tool list     ├───────────────────────────────┬────────────────────┤
+│ System status │ Input                         │ Options            │
+│               │                               │ Schema fields      │
+│               ├───────────────────────────────┤ Reset/defaults     │
+│               │ Output: Raw / Tree / Error    │ Help text          │
+└───────────────┴───────────────────────────────┴────────────────────┘
+```
+
+The input/output area is the visual center. The options inspector should not compete with it; it exists to configure the selected run.
+
+### Global Search And Command Menu
+
+Search should live in the top bar, not only inside the sidebar. It should support:
+
+- Search tools by name, tag, and description.
+- Jump to recent executions for authenticated users.
+- Open settings/history.
+- Future command actions such as "copy last result" or "clear input".
+
+The sidebar still includes tag filters and tool discovery, but the top search is the fastest path for power users.
 
 ### Routing
 
@@ -386,6 +427,163 @@ tool_executions
 ```
 
 Frontend should treat tool schemas as the contract. It should not need a new route/component for every tool unless a future tool needs a custom advanced UI.
+
+### Tool Workspace Behavior
+
+The tool workspace has these stable regions:
+
+- **Tool header**: category, title, description, favorite action, primary run action.
+- **Status strip**: access level, execution mode, latest run status, duration, history policy, copy/result actions.
+- **Input panel**: large text/file area, paste/clear actions, input size, validation feedback.
+- **Output panel**: result display with reusable view modes.
+- **Options inspector**: schema-rendered controls, defaults, reset, help text, and dangerous-option warnings.
+
+Output should support multiple view modes where applicable:
+
+- `Raw`: raw text or serialized JSON result.
+- `Tree`: structured view for JSON-like output.
+- `Diff`: optional comparison view for formatter/transform tools.
+- `Error`: structured validation or execution failure details.
+
+V1 can implement `Raw` and `Error` first, but the `ResultPanel` API should leave room for `Tree` and `Diff`.
+
+### Async And Error States
+
+Execution state must not rely on color alone. Use text, icon, border treatment, and semantic color together.
+
+| State | UI Treatment |
+|-------|--------------|
+| `idle` | Neutral status strip, run button enabled |
+| `validating` | Inline validation near affected field |
+| `queued` | Status strip with queue position when available |
+| `running` | Progress/status strip; keep input readable |
+| `succeeded` | Success badge, duration, copy result action |
+| `failed` | Error panel with safe message and request ID |
+| `timed_out` | Warning/error treatment with retry guidance |
+| `rate_limited` | Clear wait message; keep user input intact |
+| `auth_required` | Inline sign-in prompt for authenticated tools |
+
+Errors should preserve user input and options. Avoid modal dialogs for ordinary validation and execution failures.
+
+### Typography
+
+Typography should improve scanability and reduce fatigue.
+
+| Token | Size / Line Height | Weight | Use |
+|-------|--------------------|--------|-----|
+| `text-xs` | 11 / 16 | 520 or 650 | metadata, tags, helper text |
+| `text-sm` | 12 / 16 | 520 or 650 | badges, compact labels |
+| `text-base` | 13-14 / 20 | 400 or 520 | body, controls, tool descriptions |
+| `text-title` | 24 / 32 | 720 | active tool title |
+| `text-page` | 28 / 36 | 720 | history/settings page title |
+
+Guidelines:
+
+- Use system sans-serif for UI text.
+- Use a monospace stack for input/output/code content.
+- Use four weight bands only: `400`, `520`, `650`, `720`.
+- Keep letter spacing at `0`; do not compress headings.
+- Avoid oversized headings inside panels. Panels should feel like tools, not landing-page sections.
+
+### Color System
+
+The UI should be mostly neutral with restrained semantic color. Avoid a one-note blue or purple interface.
+
+Core palette:
+
+| Role | Color | Use |
+|------|-------|-----|
+| Primary | `#2563EB` | main run action, selected tool, focused primary affordance |
+| Success | `#10B981` | succeeded state only |
+| Warning | `#F59E0B` | timeout, risky option, pending attention |
+| Danger | `#EF4444` | failed/destructive state |
+| Background | `#F6F8FB` | app canvas |
+| Surface | `#FFFFFF` | panels, sidebar, top bar |
+| Border | `#DCE3EE` | panel and layout separators |
+| Text | `#172033` | primary text |
+| Muted Text | `#536274` / `#718096` | secondary and tertiary text |
+
+Contrast rules:
+
+- Primary text must meet WCAG AA on surfaces.
+- Status badges must include text labels, not just colored dots.
+- Primary blue is for action and selection only; do not use it as broad decoration.
+- Use green/orange/red only for semantic status.
+
+### Layout And Visual Hierarchy
+
+Use an 8px spacing system:
+
+- `4px`: tight inline gaps.
+- `8px`: component internals and compact list gaps.
+- `12px`: panel padding for dense controls.
+- `16px`: sidebar/workspace groups.
+- `24px`: page-level spacing.
+
+Layout rules:
+
+- Top bar height: `56px`.
+- Sidebar width: `248-264px`.
+- Panel radius: `8px`.
+- Input/output panels should keep stable heights; dynamic content should scroll inside the panel instead of resizing the entire workspace.
+- Options inspector width: `304-336px`.
+- Keep cards for repeated items and panels only; do not nest cards inside cards.
+- The strongest visual path should be: selected tool title -> run/status strip -> input -> output -> options.
+
+### Component And Design System
+
+Build frontend UI from a small set of stable primitives.
+
+Atomic components:
+
+- `Button`: primary, secondary, ghost, danger.
+- `IconButton`: toolbar actions with tooltip.
+- `TextInput`, `Textarea`, `Select`, `Switch`, `Checkbox`, `SegmentedControl`.
+- `Badge`, `StatusBadge`, `Tag`.
+- `Tooltip`, `Popover`, `Drawer`, `Tabs`.
+- `Panel`, `PanelHeader`, `EmptyState`.
+
+Composite components:
+
+- `AppShell`: top bar, sidebar, main content frame.
+- `GlobalCommandMenu`: search and command entry.
+- `ToolListItem`: icon, label, tags/status, favorite affordance.
+- `ToolWorkspace`: page-level tool execution template.
+- `SchemaForm`: schema-driven options and input fields.
+- `SchemaField`: one schema field plus label, help text, validation message.
+- `ToolPanel`: stable panel container for input/output.
+- `ResultPanel`: raw/error first, tree/diff-ready.
+- `ExecutionStatusStrip`: state, duration, history policy, copy/retry actions.
+- `AuthEmptyState`: sign-in prompts for protected features.
+
+Page templates:
+
+- `ToolPage`: default route and main working surface.
+- `HistoryPage`: authenticated execution history with filters and detail preview.
+- `SettingsPage`: preferences, theme, default tool options.
+- `AuthCallbackPage`: minimal OAuth callback landing if needed.
+
+### Mobile Layout
+
+Do not squeeze the desktop three-column layout onto mobile.
+
+Mobile should use:
+
+- Top bar with brand, command/search button, and auth/menu button.
+- Tool picker as a drawer or full-screen command menu.
+- Input and Output as tabs or stacked panels.
+- Options as a bottom drawer.
+- Sticky run button near the bottom when input is in focus.
+
+The primary mobile flow is: choose tool -> enter input -> run -> inspect/copy output. Favorites, history, and settings are secondary.
+
+### Accessibility And Interaction
+
+- Every icon-only action needs a tooltip and accessible label.
+- Focus ring should be visible and consistent: primary blue outline with enough contrast.
+- Keyboard users should be able to open command search, switch tools, run a tool, and copy output.
+- Validation messages should be placed near fields and summarized in the status strip when run fails.
+- Loading states must preserve layout dimensions to avoid jumpy panels.
 
 ## Deployment And Operations
 
