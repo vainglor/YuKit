@@ -1,0 +1,14 @@
+.claude/
+.superpowers/
+
+__pycache__/
+.pytest_cache/
+pytest-cache-files-*/
+.ruff_cache/
+.mypy_cache/
+.venv/
+*.egg-info/
+dist/
+node_modules/
+.env
+.logs/

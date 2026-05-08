@@ -138,7 +138,7 @@ Tools are backend plugins loaded from a controlled code directory. V1 does not s
 ### Tool Contract
 
 ```python
-class BaseTool(Protocol):
+class BaseTool(ABC):
     name: str
     label: str
     description: str
@@ -151,6 +151,7 @@ class BaseTool(Protocol):
     output_schema: type[BaseModel]
     allow_history_input_storage: bool = False
 
+    @abstractmethod
     async def run(
         self,
         input_data: BaseModel,

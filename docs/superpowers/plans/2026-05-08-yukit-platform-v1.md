@@ -20,6 +20,15 @@
 
 The spec spans several subsystems: backend API, authentication, tool plugins, queue workers, frontend, deployment, and CI. This plan keeps them in one V1 sequence because each task adds a testable slice and the tasks depend on shared contracts. If implementation gets too large during execution, split after Task 6 into separate backend, frontend, and deployment plans.
 
+## Execution Adjustments
+
+- Start with a narrow runnable slice: JSON Format only, anonymous sync execution, health endpoints, and the Quiet Utility Workspace frontend.
+- Add a backend smoke test in Task 1 so `pytest` exits successfully instead of relying on the non-zero "no tests ran" case.
+- Add local development Compose before database migrations so Task 3 has PostgreSQL available.
+- Create a minimal `App.vue` shell during the frontend scaffold before running `pnpm build`; Task 10 can then replace it with the full workspace.
+- Serve frontend static assets from a custom Caddy image or mounted build output. Do not point a stock Caddy container at `/app/frontend/dist` unless that path is actually present inside the Caddy container.
+- Keep GitHub OAuth, email-login reservation, Redis queue workers, and persistent user features in the plan, but defer them until the JSON tool slice is stable.
+
 ## File Structure Map
 
 Create this structure during implementation:
@@ -163,6 +172,7 @@ PUT    /api/me/preferences
 - Create: `backend/app/config.py`
 - Create: `backend/app/errors.py`
 - Create: `backend/tests/conftest.py`
+- Create: `backend/tests/test_smoke.py`
 
 - [ ] **Step 1: Create backend package metadata and dependencies**
 
@@ -355,7 +365,7 @@ python -m ruff check .
 Expected:
 
 ```text
-no tests ran
+1 passed
 All checks passed!
 ```
 
@@ -2197,11 +2207,13 @@ Create `frontend/src/main.ts`:
 ```ts
 import { createApp } from 'vue'
 import { router } from './router'
-import App from './views/App.vue'
+import App from './App.vue'
 import './styles.css'
 
 createApp(App).use(router).mount('#app')
 ```
+
+Create `frontend/src/App.vue` as a minimal router shell before the first build. The full Quiet Utility Workspace layout is implemented in Task 10.
 
 Create `frontend/src/router.ts`:
 
@@ -2820,6 +2832,7 @@ services:
       - "443:443"
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv/frontend:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -2887,7 +2900,7 @@ Create `docker/Caddyfile`:
   }
 
   handle {
-    root * /app/frontend/dist
+    root * /srv/frontend
     try_files {path} /index.html
     file_server
   }
