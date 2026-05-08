@@ -254,6 +254,10 @@ kbd {
   background: var(--primary-soft);
 }
 
+.tool-item:disabled {
+  opacity: 0.55;
+}
+
 .tool-glyph {
   width: 28px;
   height: 28px;

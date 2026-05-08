@@ -142,13 +142,14 @@ async def run_tool(
     try:
         result = await tool.run(input_data, options)
     except ValueError as exc:
+        error_code = "invalid_json" if tool.name == "json-format" else "invalid_input"
         if execution is not None and db is not None:
             execution.status = "failed"
-            execution.error_code = "invalid_json"
+            execution.error_code = error_code
             execution.error_message = str(exc)
             execution.duration_ms = int((time.perf_counter() - started) * 1000)
             await db.commit()
-        raise ApiError(status_code=422, code="invalid_json", message=str(exc)) from exc
+        raise ApiError(status_code=422, code=error_code, message=str(exc)) from exc
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     if execution is not None and db is not None:

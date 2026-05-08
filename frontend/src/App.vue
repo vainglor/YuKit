@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import { runBase64Codec, type Base64RunOptions } from './api/base64'
 import { ApiError, runJsonFormat, type JsonRunOptions } from './api/tools'
 import {
   buildPreferencesPayload,
@@ -19,7 +20,9 @@ import { t, toggleLocale } from './i18n'
 
 type OutputTab = 'raw' | 'tree' | 'error'
 type RunState = 'idle' | 'running' | 'succeeded' | 'failed'
+type ToolName = 'json-format' | 'base64' | 'timestamp' | 'regex-test'
 
+const selectedTool = ref<ToolName>('json-format')
 const input = ref('{"b":1,"a":{"d":4,"c":3}}')
 const output = ref('')
 const errorMessage = ref('')
@@ -35,47 +38,66 @@ const options = ref<JsonRunOptions>({
   sortKeys: true,
   ensureAscii: false
 })
+const base64Options = ref<Base64RunOptions>({
+  mode: 'encode',
+  charset: 'utf-8'
+})
 
 const tools = computed(() => [
   {
-    name: 'json-format',
+    name: 'json-format' as const,
     glyph: '{}',
     title: t('tools.jsonFormat.title'),
     meta: t('tools.jsonFormat.meta'),
-    active: true,
-    favorite: favorites.value.includes('json-format')
+    active: selectedTool.value === 'json-format',
+    favorite: favorites.value.includes('json-format'),
+    enabled: true
   },
   {
-    name: 'timestamp',
+    name: 'timestamp' as const,
     glyph: 'T',
     title: t('tools.timestamp.title'),
     meta: t('tools.timestamp.meta'),
     active: false,
-    favorite: false
+    favorite: false,
+    enabled: false
   },
   {
-    name: 'base64',
+    name: 'base64' as const,
     glyph: '64',
     title: t('tools.base64.title'),
     meta: t('tools.base64.meta'),
-    active: false,
-    favorite: false
+    active: selectedTool.value === 'base64',
+    favorite: favorites.value.includes('base64'),
+    enabled: true
   },
   {
-    name: 'regex-test',
+    name: 'regex-test' as const,
     glyph: '.*',
     title: t('tools.regex.title'),
     meta: t('tools.regex.meta'),
     active: false,
-    favorite: false
+    favorite: false,
+    enabled: false
   }
 ])
 
+const currentToolTitle = computed(() =>
+  selectedTool.value === 'base64' ? t('tools.base64.title') : t('tools.jsonFormat.title')
+)
+const currentToolKicker = computed(() =>
+  selectedTool.value === 'base64' ? t('workspace.base64Kicker') : t('workspace.jsonKicker')
+)
+const currentToolDescription = computed(() =>
+  selectedTool.value === 'base64'
+    ? t('workspace.base64Description')
+    : t('workspace.jsonDescription')
+)
 const inputBytes = computed(() => new TextEncoder().encode(input.value).length)
 const outputBytes = computed(() => new TextEncoder().encode(output.value).length)
 const hasOutput = computed(() => output.value.length > 0)
 const isSignedIn = computed(() => currentUser.value !== null)
-const favoriteJson = computed(() => favorites.value.includes('json-format'))
+const favoriteCurrentTool = computed(() => favorites.value.includes(selectedTool.value))
 const displayName = computed(() => currentUser.value?.display_name || currentUser.value?.email || '')
 const stateLabel = computed(() => {
   if (runState.value === 'running') return t('status.running')
@@ -84,6 +106,9 @@ const stateLabel = computed(() => {
   return t('status.ready')
 })
 const recentExecutions = computed(() => executions.value.slice(0, 5))
+const outputPlaceholder = computed(() =>
+  selectedTool.value === 'base64' ? t('placeholders.base64Output') : t('placeholders.rawOutput')
+)
 const treeOutput = computed(() => {
   if (!output.value) return ''
   try {
@@ -160,7 +185,7 @@ async function toggleFavorite() {
     await signIn()
     return
   }
-  favorites.value = await setFavorite('json-format', !favoriteJson.value)
+  favorites.value = await setFavorite(selectedTool.value, !favoriteCurrentTool.value)
 }
 
 async function runTool() {
@@ -169,11 +194,17 @@ async function runTool() {
   activeTab.value = 'raw'
 
   try {
-    const response = await runJsonFormat(input.value, options.value)
-    output.value = response.result.formatted
-    durationMs.value = response.duration_ms
+    if (selectedTool.value === 'base64') {
+      const response = await runBase64Codec(input.value, base64Options.value)
+      output.value = response.result.text
+      durationMs.value = response.duration_ms
+    } else {
+      const response = await runJsonFormat(input.value, options.value)
+      output.value = response.result.formatted
+      durationMs.value = response.duration_ms
+    }
     runState.value = 'succeeded'
-    if (currentUser.value) {
+    if (currentUser.value && selectedTool.value === 'json-format') {
       await savePreferences(buildPreferencesPayload(options.value))
       executions.value = await fetchExecutions()
     }
@@ -186,6 +217,13 @@ async function runTool() {
   }
 }
 
+function selectTool(toolName: ToolName, enabled: boolean) {
+  if (!enabled || selectedTool.value === toolName) return
+  selectedTool.value = toolName
+  clearInput()
+  useSampleInput()
+}
+
 function clearInput() {
   input.value = ''
   output.value = ''
@@ -195,11 +233,15 @@ function clearInput() {
 }
 
 function useSampleInput() {
-  input.value = '{\n  "hello": "YuKit"\n}'
+  input.value = selectedTool.value === 'base64' ? 'Hello, YuKit' : '{\n  "hello": "YuKit"\n}'
 }
 
 function resetOptions() {
-  options.value = { indent: 2, sortKeys: true, ensureAscii: false }
+  if (selectedTool.value === 'base64') {
+    base64Options.value = { mode: 'encode', charset: 'utf-8' }
+  } else {
+    options.value = { indent: 2, sortKeys: true, ensureAscii: false }
+  }
 }
 
 async function copyOutput() {
@@ -269,6 +311,8 @@ async function copyOutput() {
           class="tool-item"
           :class="{ active: tool.active }"
           type="button"
+          :disabled="!tool.enabled"
+          @click="selectTool(tool.name, tool.enabled)"
         >
           <span class="tool-glyph">{{ tool.glyph }}</span>
           <span class="tool-copy">
@@ -285,9 +329,9 @@ async function copyOutput() {
     <main class="workspace">
       <section class="workspace-heading">
         <div>
-          <div class="kicker">{{ t('workspace.kicker') }}</div>
-          <h1>{{ t('workspace.title') }}</h1>
-          <p>{{ t('workspace.description') }}</p>
+          <div class="kicker">{{ currentToolKicker }}</div>
+          <h1>{{ currentToolTitle }}</h1>
+          <p>{{ currentToolDescription }}</p>
         </div>
         <div class="heading-actions">
           <button
@@ -297,7 +341,7 @@ async function copyOutput() {
             :aria-label="t('actions.favorite')"
             @click="toggleFavorite"
           >
-            {{ favoriteJson ? '★' : '☆' }}
+            {{ favoriteCurrentTool ? '★' : '☆' }}
           </button>
           <button class="primary-button run-button" type="button" :disabled="runState === 'running'" @click="runTool">
             {{ runState === 'running' ? t('actions.running') : t('actions.run') }}
@@ -332,7 +376,7 @@ async function copyOutput() {
               v-model="input"
               class="code-input"
               spellcheck="false"
-              :aria-label="t('aria.jsonInput')"
+              :aria-label="t('aria.toolInput')"
             />
           </section>
 
@@ -352,7 +396,7 @@ async function copyOutput() {
                 <span>{{ outputBytes }} B</span>
               </span>
             </header>
-            <pre v-if="activeTab === 'raw'" class="code-output">{{ output || t('placeholders.rawOutput') }}</pre>
+            <pre v-if="activeTab === 'raw'" class="code-output">{{ output || outputPlaceholder }}</pre>
             <pre v-else-if="activeTab === 'tree'" class="code-output">{{ treeOutput || t('placeholders.treeOutput') }}</pre>
             <div v-else class="error-output">
               <strong>{{ errorMessage || t('errors.noLatestError') }}</strong>
@@ -367,6 +411,7 @@ async function copyOutput() {
             <button type="button" @click="resetOptions">{{ t('actions.reset') }}</button>
           </header>
           <div class="options-body">
+            <template v-if="selectedTool === 'json-format'">
             <label class="field">
               <span>{{ t('options.indentSize') }}</span>
               <select v-model.number="options.indent">
@@ -392,6 +437,24 @@ async function copyOutput() {
               </span>
               <input v-model="options.ensureAscii" type="checkbox" />
             </label>
+            </template>
+
+            <template v-else>
+            <label class="field">
+              <span>{{ t('options.codecMode') }}</span>
+              <select v-model="base64Options.mode">
+                <option value="encode">{{ t('options.encode') }}</option>
+                <option value="decode">{{ t('options.decode') }}</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>{{ t('options.charset') }}</span>
+              <select v-model="base64Options.charset">
+                <option value="utf-8">UTF-8</option>
+              </select>
+            </label>
+            </template>
 
             <div class="history-note">
               <span>{{ t('options.historyPolicy') }}</span>

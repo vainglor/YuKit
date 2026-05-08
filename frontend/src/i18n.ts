@@ -14,7 +14,7 @@ const en = {
   'actions.running': 'Running',
   'actions.sample': 'Sample',
   'aria.executionStatus': 'Execution status',
-  'aria.jsonInput': 'JSON input',
+  'aria.toolInput': 'Tool input',
   'aria.tools': 'Tools',
   'auth.signIn': 'Sign in',
   'badges.inputNotStored': 'Input not stored',
@@ -24,6 +24,10 @@ const en = {
   'errors.sanitized': 'Errors are sanitized by the API and do not expose stack traces.',
   'errors.unexpectedToolRunFailure': 'Unexpected tool run failure',
   'options.compact': 'Compact',
+  'options.charset': 'Charset',
+  'options.codecMode': 'Mode',
+  'options.decode': 'Decode',
+  'options.encode': 'Encode',
   'options.ensureAscii': 'Ensure ASCII',
   'options.ensureAsciiHelp': 'Escape non-ASCII characters when needed.',
   'options.historyPolicy': 'History policy',
@@ -40,6 +44,7 @@ const en = {
   'panels.options': 'Options',
   'panels.output': 'Output',
   'placeholders.rawOutput': 'Run the tool to see formatted JSON.',
+  'placeholders.base64Output': 'Run the tool to see the codec result.',
   'placeholders.treeOutput': 'Tree view appears after a successful run.',
   'sections.discover': 'Discover',
   'sections.favorites': 'Favorites',
@@ -61,7 +66,7 @@ const en = {
   'toolbar.languageSwitch': '中文',
   'toolbar.search': 'Search tools or press command menu',
   'toolbar.theme': 'Theme',
-  'tools.base64.meta': 'Planned',
+  'tools.base64.meta': 'Public · Sync',
   'tools.base64.title': 'Base64',
   'tools.jsonFormat.meta': 'Public · Sync',
   'tools.jsonFormat.title': 'JSON Format',
@@ -69,9 +74,10 @@ const en = {
   'tools.regex.title': 'Regex Test',
   'tools.timestamp.meta': 'Planned',
   'tools.timestamp.title': 'Timestamp',
-  'workspace.description': 'Validate, format, and normalize JSON. Inputs stay local to the run history policy.',
-  'workspace.kicker': 'Developer · Format',
-  'workspace.title': 'JSON Format'
+  'workspace.base64Description': 'Encode plain text to Base64 or decode Base64 back to readable text.',
+  'workspace.base64Kicker': 'Developer · Codec',
+  'workspace.jsonDescription': 'Validate, format, and normalize JSON. Inputs stay local to the run history policy.',
+  'workspace.jsonKicker': 'Developer · Format'
 } as const
 
 type MessageKey = keyof typeof en
@@ -85,7 +91,7 @@ const zh: Record<MessageKey, string> = {
   'actions.running': '运行中',
   'actions.sample': '示例',
   'aria.executionStatus': '执行状态',
-  'aria.jsonInput': 'JSON 输入',
+  'aria.toolInput': '工具输入',
   'aria.tools': '工具',
   'auth.signIn': '登录',
   'badges.inputNotStored': '不保存输入',
@@ -95,6 +101,10 @@ const zh: Record<MessageKey, string> = {
   'errors.sanitized': '错误信息已由 API 处理，不会暴露堆栈。',
   'errors.unexpectedToolRunFailure': '工具运行失败',
   'options.compact': '紧凑',
+  'options.charset': '字符集',
+  'options.codecMode': '模式',
+  'options.decode': '解码',
+  'options.encode': '编码',
   'options.ensureAscii': '确保 ASCII',
   'options.ensureAsciiHelp': '需要时转义非 ASCII 字符。',
   'options.historyPolicy': '历史策略',
@@ -111,6 +121,7 @@ const zh: Record<MessageKey, string> = {
   'panels.options': '选项',
   'panels.output': '输出',
   'placeholders.rawOutput': '运行工具后查看格式化 JSON。',
+  'placeholders.base64Output': '运行工具后查看编解码结果。',
   'placeholders.treeOutput': '成功运行后显示树形视图。',
   'sections.discover': '发现',
   'sections.favorites': '收藏',
@@ -132,7 +143,7 @@ const zh: Record<MessageKey, string> = {
   'toolbar.languageSwitch': 'EN',
   'toolbar.search': '搜索工具或打开命令菜单',
   'toolbar.theme': '主题',
-  'tools.base64.meta': '规划中',
+  'tools.base64.meta': '公开 · 同步',
   'tools.base64.title': 'Base64',
   'tools.jsonFormat.meta': '公开 · 同步',
   'tools.jsonFormat.title': 'JSON 格式化',
@@ -140,9 +151,10 @@ const zh: Record<MessageKey, string> = {
   'tools.regex.title': '正则测试',
   'tools.timestamp.meta': '规划中',
   'tools.timestamp.title': '时间戳',
-  'workspace.description': '校验、格式化并规范化 JSON。输入遵循运行历史策略。',
-  'workspace.kicker': '开发者 · 格式化',
-  'workspace.title': 'JSON 格式化'
+  'workspace.base64Description': '将普通文本编码为 Base64，或把 Base64 解码回可读文本。',
+  'workspace.base64Kicker': '开发者 · 编解码',
+  'workspace.jsonDescription': '校验、格式化并规范化 JSON。输入遵循运行历史策略。',
+  'workspace.jsonKicker': '开发者 · 格式化'
 }
 
 const messages: Record<Locale, Record<MessageKey, string>> = {
