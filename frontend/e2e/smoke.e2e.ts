@@ -7,3 +7,22 @@ test('renders the toolbox workspace', async ({ page }) => {
   await expect(page.getByRole('button', { name: /Run|运行/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /Text Hash|文本哈希/ })).toBeVisible()
 })
+
+test('wires visible workspace controls', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('button', { name: /Search tools|搜索工具/ }).click()
+  await expect(page.getByRole('dialog', { name: /Command menu|命令菜单/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: /Command menu|命令菜单/ })).toBeHidden()
+
+  await page.getByRole('button', { name: /Switch to light theme|切换到浅色主题/ }).click()
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.themePreference))
+    .toBe('light')
+
+  await page.getByRole('button', { name: /Codec|编解码/ }).click()
+  const toolList = page.locator('.tool-list')
+  await expect(toolList.getByRole('button', { name: /Base64/ })).toBeVisible()
+  await expect(toolList.getByRole('button', { name: /JSON Format|JSON 格式化/ })).toBeHidden()
+})

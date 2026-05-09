@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { runBase64Codec, type Base64RunOptions } from './api/base64'
 import { runRegexTest, type RegexFlag, type RegexRunOptions } from './api/regex'
@@ -7,6 +7,7 @@ import { runTextHash, type TextHashRunOptions } from './api/textHash'
 import { runTimestampConverter, type TimestampRunOptions } from './api/timestamp'
 import { ApiError, runJsonFormat, type JsonRunOptions } from './api/tools'
 import {
+  apiBaseUrl,
   buildPreferencesPayload,
   fetchExecution,
   devLogin,
@@ -21,13 +22,31 @@ import {
   type ExecutionSummary,
   type UserProfile
 } from './api/platform'
+import {
+  filterTools,
+  nextTheme,
+  serializeExecutionResult,
+  type ThemePreference,
+  type ToolTag
+} from './interactions'
 import { t, toggleLocale } from './i18n'
 
 type OutputTab = 'raw' | 'tree' | 'error'
 type RunState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'canceled'
 type ToolName = 'json-format' | 'base64' | 'timestamp' | 'regex-test' | 'text-hash'
+type CommandId = 'run' | 'copy' | 'theme' | 'help' | 'refresh-status'
+type SystemStatus = 'unknown' | 'checking' | 'healthy' | 'unavailable'
 
 const selectedTool = ref<ToolName>('json-format')
+const activeTag = ref<ToolTag>('all')
+const commandOpen = ref(false)
+const commandQuery = ref('')
+const commandInput = ref<HTMLInputElement | null>(null)
+const helpOpen = ref(false)
+const themePreference = ref<ThemePreference>(readStoredTheme())
+const copyStatus = ref<'idle' | 'copied' | 'failed'>('idle')
+const systemStatus = ref<SystemStatus>('unknown')
+const systemBusy = ref(false)
 const input = ref('{"b":1,"a":{"d":4,"c":3}}')
 const output = ref('')
 const errorMessage = ref('')
@@ -68,12 +87,23 @@ const regexFlagOptions: Array<{ value: RegexFlag; labelKey: string }> = [
   { value: 'verbose', labelKey: 'options.flagVerbose' }
 ]
 
+const tagOptions: Array<{ value: ToolTag; labelKey: string }> = [
+  { value: 'all', labelKey: 'tags.all' },
+  { value: 'format', labelKey: 'tags.format' },
+  { value: 'codec', labelKey: 'tags.codec' },
+  { value: 'time', labelKey: 'tags.time' },
+  { value: 'text', labelKey: 'tags.text' }
+]
+
+const toolNames: ToolName[] = ['json-format', 'timestamp', 'base64', 'regex-test', 'text-hash']
+
 const tools = computed(() => [
   {
     name: 'json-format' as const,
     glyph: '{}',
     title: t('tools.jsonFormat.title'),
     meta: t('tools.jsonFormat.meta'),
+    tags: ['format'] as const,
     active: selectedTool.value === 'json-format',
     favorite: favorites.value.includes('json-format'),
     enabled: true
@@ -83,6 +113,7 @@ const tools = computed(() => [
     glyph: 'T',
     title: t('tools.timestamp.title'),
     meta: t('tools.timestamp.meta'),
+    tags: ['time'] as const,
     active: selectedTool.value === 'timestamp',
     favorite: favorites.value.includes('timestamp'),
     enabled: true
@@ -92,6 +123,7 @@ const tools = computed(() => [
     glyph: '64',
     title: t('tools.base64.title'),
     meta: t('tools.base64.meta'),
+    tags: ['codec'] as const,
     active: selectedTool.value === 'base64',
     favorite: favorites.value.includes('base64'),
     enabled: true
@@ -101,6 +133,7 @@ const tools = computed(() => [
     glyph: '.*',
     title: t('tools.regex.title'),
     meta: t('tools.regex.meta'),
+    tags: ['text'] as const,
     active: selectedTool.value === 'regex-test',
     favorite: favorites.value.includes('regex-test'),
     enabled: true
@@ -110,12 +143,17 @@ const tools = computed(() => [
     glyph: '#',
     title: t('tools.textHash.title'),
     meta: t('tools.textHash.meta'),
+    tags: ['text'] as const,
     active: selectedTool.value === 'text-hash',
     favorite: favorites.value.includes('text-hash'),
     enabled: true
   }
 ])
 
+const visibleTools = computed(() => filterTools(tools.value, '', activeTag.value))
+const favoriteToolItems = computed(() => tools.value.filter((tool) => tool.favorite))
+const commandToolResults = computed(() => filterTools(tools.value, commandQuery.value, 'all'))
+const currentTool = computed(() => tools.value.find((tool) => tool.name === selectedTool.value))
 const currentToolTitle = computed(() =>
   selectedTool.value === 'base64'
     ? t('tools.base64.title')
@@ -171,6 +209,79 @@ const stateLabel = computed(() => {
   return t('status.ready')
 })
 const recentExecutions = computed(() => executions.value.slice(0, 5))
+const themeButtonTitle = computed(() =>
+  themePreference.value === 'light'
+    ? t('theme.switchToDark')
+    : themePreference.value === 'dark'
+      ? t('theme.switchToSystem')
+      : t('theme.switchToLight')
+)
+const themeStatusLabel = computed(() =>
+  themePreference.value === 'light'
+    ? t('theme.light')
+    : themePreference.value === 'dark'
+      ? t('theme.dark')
+      : t('theme.system')
+)
+const systemStatusLabel = computed(() => {
+  if (systemStatus.value === 'checking') return t('system.checking')
+  if (systemStatus.value === 'healthy') return t('system.healthy')
+  if (systemStatus.value === 'unavailable') return t('system.unavailable')
+  return t('system.refresh')
+})
+const systemTone = computed(() =>
+  systemStatus.value === 'healthy'
+    ? 'good'
+    : systemStatus.value === 'unavailable'
+      ? 'danger'
+      : systemStatus.value === 'checking'
+        ? 'warning'
+        : ''
+)
+const copyStatusLabel = computed(() => {
+  if (copyStatus.value === 'copied') return t('feedback.copied')
+  if (copyStatus.value === 'failed') return t('feedback.copyFailed')
+  return ''
+})
+const commandActions = computed<Array<{ id: CommandId; label: string; hint: string; disabled: boolean }>>(() => {
+  const actions = [
+    {
+      id: 'run' as const,
+      label: t('command.runCurrent'),
+      hint: currentToolTitle.value,
+      disabled: runState.value === 'running' || runState.value === 'queued'
+    },
+    {
+      id: 'copy' as const,
+      label: t('command.copyResult'),
+      hint: hasOutput.value ? `${outputBytes.value} B` : t('command.noResult'),
+      disabled: !hasOutput.value
+    },
+    {
+      id: 'theme' as const,
+      label: t('command.toggleTheme'),
+      hint: themeStatusLabel.value,
+      disabled: false
+    },
+    {
+      id: 'help' as const,
+      label: t('command.openHelp'),
+      hint: currentToolTitle.value,
+      disabled: false
+    },
+    {
+      id: 'refresh-status' as const,
+      label: t('command.refreshStatus'),
+      hint: systemStatusLabel.value,
+      disabled: systemBusy.value
+    }
+  ]
+  const query = commandQuery.value.trim().toLowerCase()
+  if (!query) return actions
+  return actions.filter((action) =>
+    [action.label, action.hint, action.id].join(' ').toLowerCase().includes(query)
+  )
+})
 const outputPlaceholder = computed(() =>
   selectedTool.value === 'base64'
     ? t('placeholders.base64Output')
@@ -192,8 +303,110 @@ const treeOutput = computed(() => {
 })
 
 onMounted(() => {
+  applyThemePreference(themePreference.value)
+  window.addEventListener('keydown', handleGlobalKeydown)
   void loadAccount()
 })
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+})
+
+watch(themePreference, (next) => {
+  applyThemePreference(next)
+})
+
+function readStoredTheme(): ThemePreference {
+  if (typeof window === 'undefined') return 'system'
+
+  try {
+    const stored = window.localStorage.getItem('yukit.theme')
+    return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+function applyThemePreference(preference: ThemePreference) {
+  if (typeof document === 'undefined') return
+
+  const resolved =
+    preference === 'system'
+      ? window.matchMedia?.('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      : preference
+  document.documentElement.dataset.theme = resolved
+  document.documentElement.dataset.themePreference = preference
+
+  try {
+    window.localStorage.setItem('yukit.theme', preference)
+  } catch {
+    // Theme changes should still work when storage is blocked.
+  }
+}
+
+function cycleTheme() {
+  themePreference.value = nextTheme(themePreference.value)
+}
+
+function isToolName(value: string): value is ToolName {
+  return toolNames.includes(value as ToolName)
+}
+
+function openCommandMenu() {
+  commandOpen.value = true
+  helpOpen.value = false
+  void nextTick(() => commandInput.value?.focus())
+}
+
+function closeOverlays() {
+  commandOpen.value = false
+  helpOpen.value = false
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    openCommandMenu()
+    return
+  }
+
+  if (event.key === 'Escape' && (commandOpen.value || helpOpen.value)) {
+    event.preventDefault()
+    closeOverlays()
+  }
+}
+
+function executeFirstCommand() {
+  if (commandToolResults.value[0]) {
+    selectTool(commandToolResults.value[0].name, commandToolResults.value[0].enabled)
+    closeOverlays()
+    return
+  }
+
+  const firstAction = commandActions.value.find((action) => !action.disabled)
+  if (firstAction) {
+    void executeCommand(firstAction.id)
+  }
+}
+
+async function executeCommand(commandId: CommandId) {
+  if (commandId === 'run') {
+    closeOverlays()
+    await runTool()
+  } else if (commandId === 'copy') {
+    closeOverlays()
+    await copyOutput()
+  } else if (commandId === 'theme') {
+    cycleTheme()
+  } else if (commandId === 'help') {
+    commandOpen.value = false
+    helpOpen.value = true
+  } else {
+    await refreshSystemStatus()
+  }
+}
 
 async function loadAccount() {
   try {
@@ -264,6 +477,7 @@ async function toggleFavorite() {
 async function runTool() {
   runState.value = 'running'
   errorMessage.value = ''
+  copyStatus.value = 'idle'
   activeTab.value = 'raw'
 
   try {
@@ -405,7 +619,61 @@ function toggleRegexFlag(flag: RegexFlag) {
 
 async function copyOutput() {
   if (!output.value) return
-  await navigator.clipboard?.writeText(output.value)
+  try {
+    await writeClipboard(output.value)
+    copyStatus.value = 'copied'
+  } catch {
+    copyStatus.value = 'failed'
+  }
+  window.setTimeout(() => {
+    copyStatus.value = 'idle'
+  }, 1800)
+}
+
+async function writeClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (!copied) {
+    throw new Error('Copy failed')
+  }
+}
+
+async function refreshSystemStatus() {
+  systemBusy.value = true
+  systemStatus.value = 'checking'
+  try {
+    const response = await fetch(`${apiBaseUrl()}/health`, { credentials: 'include' })
+    if (!response.ok) throw new Error('Health check failed')
+    systemStatus.value = 'healthy'
+  } catch {
+    systemStatus.value = 'unavailable'
+  } finally {
+    systemBusy.value = false
+  }
+}
+
+function restoreExecution(item: ExecutionSummary) {
+  if (isToolName(item.tool)) {
+    selectedTool.value = item.tool
+  }
+  runState.value = isTerminalExecutionStatus(item.status) ? (item.status as RunState) : 'succeeded'
+  durationMs.value = item.duration_ms
+  output.value = serializeExecutionResult(item.result)
+  errorMessage.value = item.error_message || item.error_code || ''
+  activeTab.value = errorMessage.value && !output.value ? 'error' : 'raw'
+  copyStatus.value = 'idle'
 }
 </script>
 
@@ -416,7 +684,13 @@ async function copyOutput() {
         <span class="brand-mark">Y</span>
         <span>YuKit</span>
       </div>
-      <button class="command-search" type="button">
+      <button
+        class="command-search"
+        type="button"
+        aria-haspopup="dialog"
+        :aria-expanded="commandOpen"
+        @click="openCommandMenu"
+      >
         <span>{{ t('toolbar.search') }}</span>
         <kbd>Ctrl K</kbd>
       </button>
@@ -430,8 +704,24 @@ async function copyOutput() {
         >
           {{ t('toolbar.languageSwitch') }}
         </button>
-        <button class="icon-button" type="button" :title="t('toolbar.help')" :aria-label="t('toolbar.help')">?</button>
-        <button class="icon-button" type="button" :title="t('toolbar.theme')" :aria-label="t('toolbar.theme')">◐</button>
+        <button
+          class="icon-button"
+          type="button"
+          :title="t('toolbar.help')"
+          :aria-label="t('toolbar.help')"
+          @click="helpOpen = true"
+        >
+          ?
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          :title="themeButtonTitle"
+          :aria-label="themeButtonTitle"
+          @click="cycleTheme"
+        >
+          ◐
+        </button>
         <button
           v-if="!isSignedIn"
           class="primary-button"
@@ -447,25 +737,137 @@ async function copyOutput() {
       </div>
     </header>
 
+    <div v-if="commandOpen" class="overlay-backdrop" @click.self="closeOverlays">
+      <section class="command-dialog" role="dialog" aria-modal="true" :aria-label="t('command.title')">
+        <header class="dialog-head">
+          <div>
+            <strong>{{ t('command.title') }}</strong>
+            <span>{{ t('command.subtitle') }}</span>
+          </div>
+          <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeOverlays">
+            ×
+          </button>
+        </header>
+
+        <input
+          ref="commandInput"
+          v-model="commandQuery"
+          class="command-input"
+          type="search"
+          :placeholder="t('command.placeholder')"
+          @keydown.enter.prevent="executeFirstCommand"
+        />
+
+        <div class="command-section">
+          <span class="section-label">{{ t('command.tools') }}</span>
+          <button
+            v-for="tool in commandToolResults"
+            :key="tool.name"
+            class="command-row"
+            type="button"
+            @click="selectTool(tool.name, tool.enabled); closeOverlays()"
+          >
+            <span class="tool-glyph">{{ tool.glyph }}</span>
+            <span>
+              <strong>{{ tool.title }}</strong>
+              <small>{{ tool.meta }}</small>
+            </span>
+          </button>
+          <p v-if="commandToolResults.length === 0" class="empty-copy">
+            {{ t('command.noTools') }}
+          </p>
+        </div>
+
+        <div class="command-section">
+          <span class="section-label">{{ t('command.actions') }}</span>
+          <button
+            v-for="action in commandActions"
+            :key="action.id"
+            class="command-row"
+            type="button"
+            :disabled="action.disabled"
+            @click="executeCommand(action.id)"
+          >
+            <span class="command-dot"></span>
+            <span>
+              <strong>{{ action.label }}</strong>
+              <small>{{ action.hint }}</small>
+            </span>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="helpOpen" class="overlay-backdrop" @click.self="closeOverlays">
+      <section class="help-dialog" role="dialog" aria-modal="true" :aria-label="t('help.title')">
+        <header class="dialog-head">
+          <div>
+            <strong>{{ t('help.title') }}</strong>
+            <span>{{ currentToolTitle }}</span>
+          </div>
+          <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeOverlays">
+            ×
+          </button>
+        </header>
+        <div class="help-body">
+          <p>{{ currentToolDescription }}</p>
+          <div class="help-grid">
+            <span>{{ t('help.access') }}</span>
+            <strong>{{ currentAccessBadge }}</strong>
+            <span>{{ t('help.mode') }}</span>
+            <strong>{{ currentModeBadge }}</strong>
+            <span>{{ t('help.history') }}</span>
+            <strong>{{ t('badges.inputNotStored') }}</strong>
+            <span>{{ t('help.activeTool') }}</span>
+            <strong>{{ currentTool?.title ?? currentToolTitle }}</strong>
+          </div>
+          <p class="empty-copy">{{ t('help.keyboard') }}</p>
+        </div>
+      </section>
+    </div>
+
     <aside class="sidebar">
       <section>
         <div class="section-label">{{ t('sections.discover') }}</div>
         <div class="chips">
-          <button class="chip active" type="button">{{ t('tags.all') }}</button>
-          <button class="chip" type="button">{{ t('tags.format') }}</button>
-          <button class="chip" type="button">{{ t('tags.codec') }}</button>
-          <button class="chip" type="button">{{ t('tags.time') }}</button>
-          <button class="chip" type="button">{{ t('tags.text') }}</button>
+          <button
+            v-for="tag in tagOptions"
+            :key="tag.value"
+            class="chip"
+            :class="{ active: activeTag === tag.value }"
+            type="button"
+            @click="activeTag = tag.value"
+          >
+            {{ t(tag.labelKey) }}
+          </button>
         </div>
       </section>
 
       <section>
         <div class="section-label">{{ t('sections.favorites') }}</div>
+        <button v-if="!isSignedIn" class="sidebar-hint" type="button" @click="signIn">
+          {{ t('favorites.signInHint') }}
+        </button>
+        <p v-else-if="favoriteToolItems.length === 0" class="empty-copy">
+          {{ t('favorites.empty') }}
+        </p>
+        <div v-else class="favorite-list">
+          <button
+            v-for="tool in favoriteToolItems"
+            :key="tool.name"
+            class="favorite-item"
+            type="button"
+            @click="selectTool(tool.name, tool.enabled)"
+          >
+            <span class="tool-glyph">{{ tool.glyph }}</span>
+            <span>{{ tool.title }}</span>
+          </button>
+        </div>
       </section>
 
       <nav class="tool-list" :aria-label="t('aria.tools')">
         <button
-          v-for="tool in tools"
+          v-for="tool in visibleTools"
           :key="tool.title"
           class="tool-item"
           :class="{ active: tool.active }"
@@ -480,9 +882,20 @@ async function copyOutput() {
           </span>
           <span class="favorite">{{ tool.favorite ? '★' : '☆' }}</span>
         </button>
+        <p v-if="visibleTools.length === 0" class="empty-copy">
+          {{ t('tools.noMatches') }}
+        </p>
       </nav>
 
-      <div class="system-badge">{{ t('system.healthy') }}</div>
+      <button
+        class="system-badge"
+        :class="systemTone"
+        type="button"
+        :disabled="systemBusy"
+        @click="refreshSystemStatus"
+      >
+        {{ systemStatusLabel }}
+      </button>
     </aside>
 
     <main class="workspace">
@@ -530,6 +943,7 @@ async function copyOutput() {
         <button class="badge action" type="button" :disabled="!hasOutput" @click="copyOutput">
           {{ t('actions.copyResult') }}
         </button>
+        <span v-if="copyStatusLabel" class="feedback-text">{{ copyStatusLabel }}</span>
       </section>
 
       <section class="tool-workspace">
@@ -707,6 +1121,7 @@ async function copyOutput() {
                 :key="item.id"
                 class="history-item"
                 type="button"
+                @click="restoreExecution(item)"
               >
                 <strong>{{ item.tool }}</strong>
                 <small>{{ item.status }} · {{ item.duration_ms ?? 0 }}ms</small>
