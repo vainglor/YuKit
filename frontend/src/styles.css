@@ -193,6 +193,20 @@ kbd {
   font-weight: 680;
 }
 
+.secondary-button {
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 680;
+}
+
 .user-pill {
   max-width: 180px;
   height: 34px;
@@ -223,7 +237,8 @@ kbd {
 }
 
 .command-dialog,
-.help-dialog {
+.help-dialog,
+.auth-dialog {
   width: min(640px, 100%);
   max-height: min(720px, calc(100vh - 96px));
   border: 1px solid var(--border);
@@ -235,6 +250,10 @@ kbd {
 
 .help-dialog {
   width: min(480px, 100%);
+}
+
+.auth-dialog {
+  width: min(420px, 100%);
 }
 
 .dialog-head {
@@ -321,6 +340,63 @@ kbd {
   padding: 14px;
   display: grid;
   gap: 14px;
+}
+
+.auth-body {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-state,
+.auth-provider {
+  width: 100%;
+}
+
+.auth-state {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  background: var(--surface-subtle);
+}
+
+.auth-state strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.auth-state span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.auth-provider {
+  min-height: 38px;
+}
+
+.auth-warning,
+.auth-error {
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.auth-warning {
+  color: var(--warning);
+  background: #fffbeb;
+}
+
+.auth-error {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .help-body p {
@@ -946,7 +1022,8 @@ input[type="checkbox"] {
   }
 
   .command-dialog,
-  .help-dialog {
+  .help-dialog,
+  .auth-dialog {
     max-height: calc(100vh - 80px);
   }
 

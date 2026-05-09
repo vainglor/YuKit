@@ -27,6 +27,12 @@ class EmailStartRequest(BaseModel):
     email: EmailStr
 
 
+class AuthOptionsResponse(BaseModel):
+    dev_login: bool
+    github: bool
+    email: bool
+
+
 def serialize_user(user: User | None) -> dict[str, Any] | None:
     if user is None:
         return None
@@ -41,6 +47,16 @@ def serialize_user(user: User | None) -> dict[str, Any] | None:
 @router.get("/me")
 async def get_me(user: User | None = Depends(optional_current_user)) -> dict[str, Any]:
     return {"user": serialize_user(user)}
+
+
+@router.get("/options")
+async def auth_options() -> AuthOptionsResponse:
+    settings = get_settings()
+    return AuthOptionsResponse(
+        dev_login=settings.environment != "production" and settings.dev_auth_enabled,
+        github=bool(settings.github_client_id),
+        email=False,
+    )
 
 
 @router.post("/dev-login")

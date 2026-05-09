@@ -11,6 +11,7 @@ import {
   buildPreferencesPayload,
   fetchExecution,
   devLogin,
+  fetchAuthOptions,
   fetchExecutions,
   fetchFavorites,
   fetchMe,
@@ -20,8 +21,10 @@ import {
   savePreferences,
   setFavorite,
   type ExecutionSummary,
+  type AuthOptions,
   type UserProfile
 } from './api/platform'
+import { preferredLoginMethod } from './authFlow'
 import {
   filterTools,
   nextTheme,
@@ -57,6 +60,10 @@ const currentUser = ref<UserProfile | null>(null)
 const favorites = ref<string[]>([])
 const executions = ref<ExecutionSummary[]>([])
 const authBusy = ref(false)
+const authDialogOpen = ref(false)
+const authLoaded = ref(false)
+const authOptions = ref<AuthOptions>({ dev_login: false, github: false, email: false })
+const authError = ref('')
 const options = ref<JsonRunOptions>({
   indent: 2,
   sortKeys: true,
@@ -199,6 +206,7 @@ const hasOutput = computed(() => output.value.length > 0)
 const isSignedIn = computed(() => currentUser.value !== null)
 const favoriteCurrentTool = computed(() => favorites.value.includes(selectedTool.value))
 const displayName = computed(() => currentUser.value?.display_name || currentUser.value?.email || '')
+const preferredAuthMethod = computed(() => preferredLoginMethod(authOptions.value))
 const stateLabel = computed(() => {
   if (runState.value === 'queued') return t('status.queued')
   if (runState.value === 'running') return t('status.running')
@@ -363,6 +371,7 @@ function openCommandMenu() {
 function closeOverlays() {
   commandOpen.value = false
   helpOpen.value = false
+  authDialogOpen.value = false
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -372,7 +381,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (event.key === 'Escape' && (commandOpen.value || helpOpen.value)) {
+  if (event.key === 'Escape' && (commandOpen.value || helpOpen.value || authDialogOpen.value)) {
     event.preventDefault()
     closeOverlays()
   }
@@ -419,6 +428,25 @@ async function loadAccount() {
   }
 }
 
+async function loadAuthOptions() {
+  if (authLoaded.value) return
+  try {
+    authOptions.value = await fetchAuthOptions()
+    authLoaded.value = true
+  } catch {
+    authOptions.value = { dev_login: false, github: false, email: false }
+    authError.value = t('auth.optionsUnavailable')
+  }
+}
+
+async function openAuthDialog() {
+  authDialogOpen.value = true
+  commandOpen.value = false
+  helpOpen.value = false
+  authError.value = ''
+  await loadAuthOptions()
+}
+
 async function loadUserResources() {
   const [favoriteList, preferences, executionList] = await Promise.all([
     fetchFavorites(),
@@ -443,19 +471,31 @@ async function loadUserResources() {
 }
 
 async function signIn() {
+  await openAuthDialog()
+}
+
+async function signInWithDev() {
   authBusy.value = true
+  authError.value = ''
   try {
     currentUser.value = await devLogin()
     await loadUserResources()
-  } catch {
-    window.location.href = '/api/auth/github/start'
+    authDialogOpen.value = false
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : t('auth.signInFailed')
   } finally {
     authBusy.value = false
   }
 }
 
+function signInWithGitHub() {
+  authError.value = ''
+  window.location.href = `${apiBaseUrl()}/auth/github/start`
+}
+
 async function signOut() {
   authBusy.value = true
+  authError.value = ''
   try {
     await logout()
     currentUser.value = null
@@ -523,7 +563,7 @@ async function runTool() {
 
 async function runAsyncTextHash() {
   if (!currentUser.value) {
-    await signIn()
+    await openAuthDialog()
   }
   if (!currentUser.value) {
     throw new Error(t('errors.authRequired'))
@@ -826,6 +866,69 @@ function restoreExecution(item: ExecutionSummary) {
       </section>
     </div>
 
+    <div v-if="authDialogOpen" class="overlay-backdrop" @click.self="closeOverlays">
+      <section class="auth-dialog" role="dialog" aria-modal="true" :aria-label="t('auth.dialogTitle')">
+        <header class="dialog-head">
+          <div>
+            <strong>{{ t('auth.dialogTitle') }}</strong>
+            <span>{{ isSignedIn ? displayName : t('auth.dialogSubtitle') }}</span>
+          </div>
+          <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeOverlays">
+            ×
+          </button>
+        </header>
+
+        <div class="auth-body">
+          <div v-if="isSignedIn" class="auth-state">
+            <strong>{{ t('auth.signedInAs') }}</strong>
+            <span>{{ displayName }}</span>
+            <button class="secondary-button" type="button" :disabled="authBusy" @click="signOut">
+              {{ t('auth.signOut') }}
+            </button>
+          </div>
+
+          <template v-else>
+            <button
+              v-if="authOptions.dev_login"
+              class="auth-provider primary-button"
+              type="button"
+              :disabled="authBusy"
+              @click="signInWithDev"
+            >
+              {{ authBusy && preferredAuthMethod === 'dev' ? t('auth.signingIn') : t('auth.localDevLogin') }}
+            </button>
+
+            <button
+              v-if="authOptions.github"
+              class="auth-provider secondary-button"
+              type="button"
+              :disabled="authBusy"
+              @click="signInWithGitHub"
+            >
+              {{ t('auth.githubLogin') }}
+            </button>
+
+            <button
+              v-if="!authOptions.github"
+              class="auth-provider secondary-button"
+              type="button"
+              disabled
+            >
+              {{ t('auth.githubUnavailable') }}
+            </button>
+
+            <p v-if="preferredAuthMethod === 'none'" class="auth-warning">
+              {{ t('auth.noProvider') }}
+            </p>
+
+            <p class="empty-copy">{{ t('auth.emailReserved') }}</p>
+          </template>
+
+          <p v-if="authError" class="auth-error">{{ authError }}</p>
+        </div>
+      </section>
+    </div>
+
     <aside class="sidebar">
       <section>
         <div class="section-label">{{ t('sections.discover') }}</div>
@@ -834,7 +937,7 @@ function restoreExecution(item: ExecutionSummary) {
             v-for="tag in tagOptions"
             :key="tag.value"
             class="chip"
-            :class="{ active: activeTag === tag.value }"
+    :class="{ active: activeTag === tag.value }"
             type="button"
             @click="activeTag = tag.value"
           >

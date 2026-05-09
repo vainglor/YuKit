@@ -1,3 +1,7 @@
+import { normalizeAuthOptions, type AuthOptions } from '../authFlow'
+
+export type { AuthOptions } from '../authFlow'
+
 export type UserProfile = {
   id: string
   email: string
@@ -71,6 +75,11 @@ export function isTerminalExecutionStatus(status: string): boolean {
 export async function fetchMe(): Promise<UserProfile | null> {
   const body = await request<{ user: UserProfile | null }>('/auth/me')
   return body.user
+}
+
+export async function fetchAuthOptions(): Promise<AuthOptions> {
+  const body = await request<AuthOptions>('/auth/options')
+  return normalizeAuthOptions(body)
 }
 
 export async function devLogin(): Promise<UserProfile> {

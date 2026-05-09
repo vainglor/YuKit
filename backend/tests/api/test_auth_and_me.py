@@ -45,6 +45,29 @@ def test_dev_login_sets_session_and_current_user(test_app) -> None:
     assert me_response.json()["user"]["email"] == "dev@example.com"
 
 
+def test_auth_options_reports_local_login_availability(test_app) -> None:
+    with TestClient(test_app) as client:
+        response = client.get("/api/auth/options")
+
+    assert response.status_code == 200
+    assert response.json() == {"dev_login": True, "github": False, "email": False}
+
+
+def test_auth_options_disables_dev_login_in_production(test_app, monkeypatch) -> None:
+    from app.config import get_settings
+
+    monkeypatch.setenv("YUKIT_ENVIRONMENT", "production")
+    monkeypatch.setenv("YUKIT_DEV_AUTH_ENABLED", "true")
+    monkeypatch.setenv("YUKIT_GITHUB_CLIENT_ID", "client-id")
+    get_settings.cache_clear()
+
+    with TestClient(test_app) as client:
+        response = client.get("/api/auth/options")
+
+    assert response.status_code == 200
+    assert response.json() == {"dev_login": False, "github": True, "email": False}
+
+
 def test_email_login_interface_is_reserved(test_app) -> None:
     with TestClient(test_app) as client:
         response = client.post("/api/auth/email/start", json={"email": "dev@example.com"})
