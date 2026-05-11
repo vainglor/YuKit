@@ -5,8 +5,10 @@ services:
     image: "${YUKIT_IMAGE_REPOSITORY:?set YUKIT_IMAGE_REPOSITORY}:web-latest"
     container_name: yukit-web
     pull_policy: always
+    ports:
+      - "${YUKIT_WEB_HTTP_BIND:-127.0.0.1:18080}:80"
     networks:
-      - edge
+      - app
     depends_on:
       api:
         condition: service_healthy
@@ -29,9 +31,11 @@ services:
       YUKIT_DEV_AUTH_ENABLED: ${YUKIT_DEV_AUTH_ENABLED:-false}
       YUKIT_DATABASE_URL: ${YUKIT_DATABASE_URL:?set YUKIT_DATABASE_URL}
       YUKIT_REDIS_URL: redis://redis:6379/0
+    ports:
+      - "${YUKIT_API_HTTP_BIND:-127.0.0.1:18000}:8000"
     networks:
       - app
-      - edge
+      - db
     depends_on:
       redis:
         condition: service_healthy
@@ -61,7 +65,7 @@ services:
       YUKIT_REDIS_URL: redis://redis:6379/0
     networks:
       - app
-      - edge
+      - db
     depends_on:
       redis:
         condition: service_healthy
@@ -97,7 +101,7 @@ services:
       YUKIT_REDIS_URL: redis://redis:6379/0
     networks:
       - app
-      - edge
+      - db
     command: sh -c "cd /app/backend && alembic upgrade head"
     restart: "no"
 
@@ -107,6 +111,6 @@ volumes:
 networks:
   app:
     name: yukit-app
-  edge:
+  db:
     external: true
-    name: "${YUKIT_PROXY_NETWORK:?set YUKIT_PROXY_NETWORK}"
+    name: "${YUKIT_DB_NETWORK:-1panel-network}"

@@ -1,8 +1,10 @@
-# YuKit Deployment Notes
+# YuKit 部署说明
 
-This is the runnable YuKit V1 platform slice. PostgreSQL stores users, sessions, favorites, preferences, and execution history. Redis backs rate limiting and the ARQ worker queue. The first concrete tools are JSON Format, Timestamp, Base64, Regex Test, and authenticated async Text Hash.
+本文档说明 YuKit 当前版本的本地启动、镜像构建、阿里云 ACR 推送、ECS 自动部署，以及在已有 1Panel OpenResty 和 PostgreSQL 容器时的推荐配置。
 
-## Local App
+YuKit 后端使用 PostgreSQL 保存用户、会话、收藏、偏好设置和工具执行历史；使用 Redis 做限流和 ARQ 异步任务队列。当前已实现的工具包括 JSON 格式化、时间戳转换、Base64、正则测试，以及登录后可用的异步文本哈希。
+
+## 本地启动
 
 ```powershell
 cd frontend
@@ -13,20 +15,71 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-Open `http://localhost:8080`. Compose publishes HTTP on `${YUKIT_HTTP_PORT:-8080}` and HTTPS on `${YUKIT_HTTPS_PORT:-8443}` for local testing. In production, use `docker-compose.prod.yml` when the server already has OpenResty and PostgreSQL managed outside this repository.
+本地访问地址：
 
-For GitHub OAuth, set `YUKIT_GITHUB_CLIENT_ID`, `YUKIT_GITHUB_CLIENT_SECRET`, `YUKIT_PUBLIC_BASE_URL`, and `YUKIT_API_BASE_URL` in `.env`. Local development can use `YUKIT_DEV_AUTH_ENABLED=true` for the built-in dev login route.
+```text
+http://localhost:8080
+```
 
-## Image Deployment With ACR, OpenResty, And Existing PostgreSQL
+本地 `docker-compose.yml` 会启动 Caddy、API、worker、PostgreSQL、Redis 等完整开发环境。它会把 HTTP 发布到 `${YUKIT_HTTP_PORT:-8080}`，HTTPS 发布到 `${YUKIT_HTTPS_PORT:-8443}`。
 
-The production stack is split into two pushed images:
+GitHub OAuth 本地调试需要在 `.env` 中配置：
 
-- `:api-latest` and `:api-<git-sha>`: FastAPI API, Alembic migrations, and ARQ worker runtime.
-- `:web-latest` and `:web-<git-sha>`: compiled Vue app served by Nginx.
+```text
+YUKIT_GITHUB_CLIENT_ID=<github-oauth-client-id>
+YUKIT_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>
+YUKIT_PUBLIC_BASE_URL=http://localhost:8080
+YUKIT_API_BASE_URL=http://localhost:8080/api
+```
 
-`docker-compose.prod.yml` starts only YuKit `web`, `api`, `worker`, `redis`, and one-shot `migrate`. It does not start Caddy or PostgreSQL and does not publish host ports, so it can run beside 1Panel OpenResty and 1Panel PostgreSQL.
+本地可以开启开发登录：
 
-For the current Aliyun ACR repository, configure these GitHub Actions secrets:
+```text
+YUKIT_DEV_AUTH_ENABLED=true
+```
+
+生产环境必须关闭：
+
+```text
+YUKIT_DEV_AUTH_ENABLED=false
+```
+
+## Caddy 和 Nginx/OpenResty 怎么选
+
+如果是一个全新的单应用服务器，Caddy 更省心：配置简单，自动申请和续期 HTTPS 证书，适合小团队快速上线。
+
+如果服务器已经通过 1Panel 管理 OpenResty，或者已经有多个站点共用一个入口代理，继续用 OpenResty/Nginx 更合适。它和现有 1Panel 体系一致，反代规则、站点配置、日志和证书都可以统一管理。
+
+YuKit 当前服务器属于第二种情况：服务器已经有 OpenResty 容器，也已经有 PostgreSQL 容器，所以生产部署推荐：
+
+- 不再启动仓库里的 Caddy。
+- 不再启动仓库里的 PostgreSQL。
+- 使用现有 OpenResty 作为公网入口。
+- 使用现有 PostgreSQL 作为数据库。
+- YuKit 自己只启动 `web`、`api`、`worker`、`redis`、`migrate`。
+
+这里的 `web` 镜像内部会用 Nginx 提供静态前端文件，但它不是公网入口。公网入口仍然是你服务器上已经运行的 OpenResty。
+
+## ACR 镜像部署方案
+
+生产环境使用 [docker-compose.prod.yml](../docker-compose.prod.yml)，并把应用拆成两个镜像：
+
+- `:api-latest` 和 `:api-<git-sha>`：FastAPI API、Alembic 数据库迁移、ARQ worker 共用的后端运行镜像。
+- `:web-latest` 和 `:web-<git-sha>`：Vue 前端构建产物，由容器内 Nginx 提供静态服务。
+
+`docker-compose.prod.yml` 只启动：
+
+- `yukit-web`
+- `yukit-api`
+- `yukit-worker`
+- `yukit-redis`
+- `yukit-migrate`
+
+它不会启动 Caddy，也不会启动 PostgreSQL。因为你的 OpenResty 容器使用的是 Docker `host` 网络，生产 Compose 会把 YuKit 的 `web` 和 `api` 只绑定到宿主机回环地址 `127.0.0.1`，再由 OpenResty 反代进去。这样不会对公网直接暴露 YuKit 容器端口，也可以和 1Panel 里的 OpenResty、PostgreSQL 容器共存。
+
+## GitHub Actions Secrets
+
+在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中配置：
 
 ```text
 ACR_REGISTRY=crpi-aa48fntml5lhz63u.cn-shenzhen.personal.cr.aliyuncs.com
@@ -41,42 +94,72 @@ SERVER_SSH_KEY=<private-key>
 DEPLOY_PATH=/opt/yukit
 ```
 
-GitHub Actions pushes images through the public ACR address. The ECS server pulls through the VPC ACR address.
+GitHub Actions 会通过公网 ACR 地址推送镜像。ECS 服务器会通过 VPC ACR 地址拉取镜像，这样速度更稳定，也不会消耗公网流量。
 
-## First Server Setup
+推送到 `main` 分支时，CI/CD 会自动执行：
 
-Create a YuKit deploy directory on the ECS server:
+1. 后端检查、类型检查、测试。
+2. 前端测试、构建、E2E smoke。
+3. 校验本地 Compose 和生产 Compose。
+4. 构建并推送 `api-latest`、`api-<git-sha>`、`web-latest`、`web-<git-sha>`。
+5. SSH 登录 ECS，拉取镜像，执行数据库迁移，重启 YuKit 服务。
+
+## 首次服务器配置
+
+在 ECS 上创建部署目录：
 
 ```bash
 mkdir -p /opt/yukit
 cd /opt/yukit
 ```
 
-Find the Docker network used by the existing OpenResty container:
+你当前服务器的网络情况是：
 
 ```bash
 docker inspect 1Panel-openresty-awUd --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}'
+docker inspect 1Panel-postgresql-Dhce --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}'
 ```
 
-Use that network as `YUKIT_PROXY_NETWORK`. If PostgreSQL is not already attached to the same network, attach it with a stable alias:
+结果分别是：
+
+```text
+OpenResty: host
+PostgreSQL: 1panel-network
+```
+
+`host` 是 Docker 内置网络，不是 user-defined network，因此不能执行下面这种命令：
 
 ```bash
-docker network connect --alias yukit-postgres "$YUKIT_PROXY_NETWORK" 1Panel-postgresql-Dhce
+docker network connect --alias yukit-postgres host 1Panel-postgresql-Dhce
 ```
 
-If Docker says PostgreSQL is already connected, either use the existing container name `1Panel-postgresql-Dhce` as the database host, or reconnect it during a maintenance window with the `yukit-postgres` alias.
+它会报错：
 
-Create the `/opt/yukit/.env` file:
+```text
+network-scoped aliases are only supported for user-defined networks
+```
+
+推荐的最少改动方案是：
+
+- OpenResty 保持 `host` 网络。
+- YuKit 的 `web` 绑定到 `127.0.0.1:18080`。
+- YuKit 的 `api` 绑定到 `127.0.0.1:18000`。
+- YuKit 的 `api`、`worker`、`migrate` 加入 PostgreSQL 所在的 `1panel-network`。
+- 数据库地址使用 `1Panel-postgresql-Dhce:5432`。
+
+创建 `/opt/yukit/.env`：
 
 ```bash
 cat > /opt/yukit/.env <<'EOF'
 YUKIT_IMAGE_REPOSITORY=crpi-aa48fntml5lhz63u-vpc.cn-shenzhen.personal.cr.aliyuncs.com/aliyun_neeko/yukit
-YUKIT_PROXY_NETWORK=<openresty-network-name>
+YUKIT_DB_NETWORK=1panel-network
+YUKIT_WEB_HTTP_BIND=127.0.0.1:18080
+YUKIT_API_HTTP_BIND=127.0.0.1:18000
 YUKIT_ENVIRONMENT=production
 YUKIT_DEV_AUTH_ENABLED=false
 YUKIT_PUBLIC_BASE_URL=http://120.25.195.126
 YUKIT_API_BASE_URL=http://120.25.195.126/api
-YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@yukit-postgres:5432/yukit
+YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@1Panel-postgresql-Dhce:5432/yukit
 YUKIT_REDIS_URL=redis://redis:6379/0
 YUKIT_SESSION_SECRET=<long-random-secret>
 YUKIT_GITHUB_CLIENT_ID=<github-oauth-client-id>
@@ -84,17 +167,48 @@ YUKIT_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>
 EOF
 ```
 
-Create the `yukit` database and user in the existing PostgreSQL instance through 1Panel or `psql`. The database host in `YUKIT_DATABASE_URL` must resolve from the YuKit `api` container.
+如果使用已有 PostgreSQL，需要在里面创建 `yukit` 数据库和对应用户。可以通过 1Panel 数据库管理界面创建，也可以进入 PostgreSQL 容器使用 `psql` 创建。
 
-For GitHub OAuth, configure the callback URL in the GitHub OAuth App:
+如果你不想依赖 `1Panel-postgresql-Dhce` 这个容器名，也可以额外创建一个专用网络并给 PostgreSQL 加稳定别名：
+
+```bash
+docker network create yukit-shared
+docker network connect --alias yukit-postgres yukit-shared 1Panel-postgresql-Dhce
+```
+
+对应 `.env` 改为：
+
+```text
+YUKIT_DB_NETWORK=yukit-shared
+YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@yukit-postgres:5432/yukit
+```
+
+这个专用网络必须是 `docker network create` 创建出来的 user-defined network，不能是内置的 `host` 网络。
+
+## GitHub OAuth 回调地址
+
+当前使用 IP 访问时，GitHub OAuth App 的回调地址配置为：
 
 ```text
 http://120.25.195.126/api/auth/github/callback
 ```
 
-## OpenResty Reverse Proxy
+如果之后绑定域名和 HTTPS，需要同步修改：
 
-Add a site or location rules in the existing OpenResty container that points traffic to the YuKit containers on the shared Docker network:
+```text
+YUKIT_PUBLIC_BASE_URL=https://你的域名
+YUKIT_API_BASE_URL=https://你的域名/api
+```
+
+GitHub OAuth App 的 callback 也要改成：
+
+```text
+https://你的域名/api/auth/github/callback
+```
+
+## OpenResty 反向代理
+
+因为 OpenResty 容器使用 `host` 网络，所以它可以直接访问宿主机的 `127.0.0.1`。在现有 OpenResty 站点中添加以下规则：
 
 ```nginx
 location = /api {
@@ -102,7 +216,7 @@ location = /api {
 }
 
 location /api/ {
-    proxy_pass http://yukit-api:8000;
+    proxy_pass http://127.0.0.1:18000;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -111,7 +225,7 @@ location /api/ {
 }
 
 location / {
-    proxy_pass http://yukit-web:80;
+    proxy_pass http://127.0.0.1:18080;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -120,11 +234,18 @@ location / {
 }
 ```
 
-Reload OpenResty after saving the config.
+保存后重载 OpenResty。
 
-## Manual Production Deploy
+可以先在 OpenResty 容器内验证能否访问 YuKit：
 
-After the first CI image push, deploy manually with:
+```bash
+docker exec -it 1Panel-openresty-awUd sh -lc 'wget -qO- http://127.0.0.1:18080/health'
+docker exec -it 1Panel-openresty-awUd sh -lc 'wget -qO- http://127.0.0.1:18000/api/health'
+```
+
+## 手动部署
+
+第一次 CI 推送镜像后，可以在服务器上手动部署一次：
 
 ```bash
 cd /opt/yukit
@@ -136,58 +257,95 @@ docker compose -f docker-compose.prod.yml ps
 curl -fsS http://120.25.195.126/api/ready
 ```
 
-The GitHub Actions `deploy` job runs the same pull, migration, restart, and readiness check automatically on pushes to `main`.
+之后推送到 `main` 分支时，GitHub Actions 的 `deploy` job 会自动执行同样的拉镜像、迁移、重启和健康检查流程。
 
-## Production Upgrade And Rollback
+## 升级和回滚
 
-The default deployment uses `api-latest` and `web-latest`. For a pinned rollout, edit `/opt/yukit/docker-compose.prod.yml` or add a production override that uses `api-<git-sha>` and `web-<git-sha>`.
+默认部署使用：
 
-Rollback is the reverse operation: set the previous image tag in `docker-compose.prod.yml` or your Compose override, then run `docker compose -f docker-compose.prod.yml up -d api worker web`.
-
-## Health Checks
-
-Compose defines health checks for:
-
-- `api`: `GET /api/health`
-- `web`: `GET /health`
-- `redis`: `redis-cli ping`
-
-Readiness is available at `GET /api/ready` and reports database and Redis status.
-
-## Backups
-
-Run an on-demand PostgreSQL backup:
-
-```bash
-mkdir -p backups
-docker compose --profile ops run --rm postgres-backup
+```text
+api-latest
+web-latest
 ```
 
-Keep at least 7 daily and 4 weekly backups. Redis is not the source of truth for user data, but append-only persistence is enabled for queue durability.
+如果要锁定某次发布，可以把生产 Compose 或生产 override 中的镜像 tag 改为：
 
-## Security Guardrails
+```text
+api-<git-sha>
+web-<git-sha>
+```
 
-- Keep `YUKIT_DEV_AUTH_ENABLED=false` in production.
-- Use a long random `YUKIT_SESSION_SECRET`.
-- Configure GitHub OAuth callback to match `YUKIT_API_BASE_URL`.
-- Caddy applies security headers and a 2 MB request body limit.
-- API docs are disabled when `YUKIT_ENVIRONMENT=production`.
-- OAuth callback state is validated before token exchange.
+回滚时，把镜像 tag 改回上一个可用版本，然后执行：
 
-## Development Servers
+```bash
+cd /opt/yukit
+docker compose -f docker-compose.prod.yml up -d api worker web
+curl -fsS http://120.25.195.126/api/ready
+```
 
-Run the API:
+## 健康检查
+
+Compose 内置健康检查：
+
+- `api`：访问 `GET /api/health`
+- `web`：访问 `GET /health`
+- `redis`：执行 `redis-cli ping`
+
+整体就绪检查：
+
+```text
+GET /api/ready
+```
+
+`/api/ready` 会检查数据库和 Redis 状态，更适合作为部署后的验收接口。
+
+## 数据备份
+
+生产环境使用已有 PostgreSQL 容器，因此优先使用 1Panel 的数据库备份能力。
+
+如果要手动备份，可以在 ECS 上执行：
+
+```bash
+mkdir -p /opt/yukit/backups
+docker exec -e PGPASSWORD='<db-password>' 1Panel-postgresql-Dhce \
+  pg_dump -U <db-user> -d yukit \
+  > /opt/yukit/backups/yukit-$(date +%F-%H%M%S).sql
+```
+
+建议至少保留：
+
+- 最近 7 天的每日备份。
+- 最近 4 周的每周备份。
+
+Redis 不是用户数据的最终来源，但生产 Compose 已开启 AOF 持久化，用于提升队列和限流状态的恢复能力。
+
+## 安全配置
+
+- 生产环境保持 `YUKIT_DEV_AUTH_ENABLED=false`。
+- 使用足够长且随机的 `YUKIT_SESSION_SECRET`。
+- GitHub OAuth callback 必须和 `YUKIT_API_BASE_URL` 对应。
+- `YUKIT_ENVIRONMENT=production` 时，API 文档默认不会开放。
+- OAuth callback 会校验 state，防止伪造回调。
+- 如果使用 HTTP IP 访问，GitHub OAuth 可以工作，但正式对外建议绑定域名并启用 HTTPS。
+
+## 开发服务器
+
+单独启动 API：
 
 ```powershell
 cd backend
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
-Run the frontend:
+单独启动前端：
 
 ```powershell
 cd frontend
 pnpm dev
 ```
 
-Open `http://localhost:5173`.
+前端开发地址：
+
+```text
+http://localhost:5173
+```

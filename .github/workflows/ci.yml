@@ -60,8 +60,8 @@ jobs:
         run: |
           touch .env
           YUKIT_IMAGE_REPOSITORY=example.com/aliyun_neeko/yukit \
-          YUKIT_PROXY_NETWORK=example-edge \
-          YUKIT_DATABASE_URL=postgresql+asyncpg://yukit:yukit@yukit-postgres:5432/yukit \
+          YUKIT_DB_NETWORK=example-db \
+          YUKIT_DATABASE_URL=postgresql+asyncpg://yukit:yukit@1Panel-postgresql-Dhce:5432/yukit \
           docker compose -f docker-compose.prod.yml config
 
   container:
