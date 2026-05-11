@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "codex-*"]
+    branches: ["main", "codex-*", "codex/**"]
   pull_request:
 
 jobs:
@@ -54,40 +54,106 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate Compose
+      - name: Validate local Compose
         run: docker compose config
+      - name: Validate production Compose
+        run: |
+          touch .env
+          YUKIT_IMAGE_REPOSITORY=example.com/aliyun_neeko/yukit \
+          YUKIT_PROXY_NETWORK=example-edge \
+          YUKIT_DATABASE_URL=postgresql+asyncpg://yukit:yukit@yukit-postgres:5432/yukit \
+          docker compose -f docker-compose.prod.yml config
 
   container:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     permissions:
       contents: read
-      packages: write
       security-events: write
+    env:
+      IMAGE_REPOSITORY: ${{ secrets.ACR_IMAGE_REPOSITORY || 'local/yukit' }}
+      PUSH_IMAGES: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.ACR_IMAGE_REPOSITORY != '' && secrets.ACR_REGISTRY != '' && secrets.ACR_USERNAME != '' && secrets.ACR_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        if: github.event_name == 'push'
+        if: env.PUSH_IMAGES == 'true'
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Build API image
+        uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          file: Dockerfile
+          push: ${{ env.PUSH_IMAGES == 'true' }}
+          load: ${{ env.PUSH_IMAGES != 'true' }}
           tags: |
-            ghcr.io/${{ github.repository }}:main-${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
-          load: ${{ github.event_name != 'push' }}
+            ${{ env.IMAGE_REPOSITORY }}:api-${{ github.sha }}
+            ${{ env.IMAGE_REPOSITORY }}:api-latest
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          push: ${{ env.PUSH_IMAGES == 'true' }}
+          load: ${{ env.PUSH_IMAGES != 'true' }}
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}:web-${{ github.sha }}
+            ${{ env.IMAGE_REPOSITORY }}:web-latest
       - uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ghcr.io/${{ github.repository }}:main-${{ github.sha }}
+          image-ref: ${{ env.IMAGE_REPOSITORY }}:api-${{ github.sha }}
           format: sarif
           output: trivy-results.sarif
-        if: github.event_name == 'push'
+        if: env.PUSH_IMAGES == 'true'
       - uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-        if: github.event_name == 'push'
+        if: env.PUSH_IMAGES == 'true'
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, compose, container]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare deploy directory
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script_stop: true
+          script: |
+            mkdir -p "${{ secrets.DEPLOY_PATH }}"
+      - name: Upload production Compose
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: "docker-compose.prod.yml"
+          target: ${{ secrets.DEPLOY_PATH }}
+          overwrite: true
+      - name: Deploy on ECS
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          script_stop: true
+          script: |
+            set -eu
+            cd "${{ secrets.DEPLOY_PATH }}"
+            test -f .env || { echo "Missing ${{ secrets.DEPLOY_PATH }}/.env"; exit 1; }
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login --username "${{ secrets.ACR_USERNAME }}" --password-stdin "${{ secrets.ACR_PULL_REGISTRY }}"
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml --profile ops run --rm migrate
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans redis api worker web
+            docker compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml exec -T api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=10).read().decode())"

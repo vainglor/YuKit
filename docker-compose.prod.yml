@@ -1,0 +1,112 @@
+name: yukit
+
+services:
+  web:
+    image: "${YUKIT_IMAGE_REPOSITORY:?set YUKIT_IMAGE_REPOSITORY}:web-latest"
+    container_name: yukit-web
+    pull_policy: always
+    networks:
+      - edge
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: "${YUKIT_IMAGE_REPOSITORY:?set YUKIT_IMAGE_REPOSITORY}:api-latest"
+    container_name: yukit-api
+    pull_policy: always
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      YUKIT_ENVIRONMENT: ${YUKIT_ENVIRONMENT:-production}
+      YUKIT_DEV_AUTH_ENABLED: ${YUKIT_DEV_AUTH_ENABLED:-false}
+      YUKIT_DATABASE_URL: ${YUKIT_DATABASE_URL:?set YUKIT_DATABASE_URL}
+      YUKIT_REDIS_URL: redis://redis:6379/0
+    networks:
+      - app
+      - edge
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)\""
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    image: "${YUKIT_IMAGE_REPOSITORY:?set YUKIT_IMAGE_REPOSITORY}:api-latest"
+    container_name: yukit-worker
+    pull_policy: always
+    command: /entrypoint-worker.sh
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      YUKIT_ENVIRONMENT: ${YUKIT_ENVIRONMENT:-production}
+      YUKIT_DEV_AUTH_ENABLED: ${YUKIT_DEV_AUTH_ENABLED:-false}
+      YUKIT_DATABASE_URL: ${YUKIT_DATABASE_URL:?set YUKIT_DATABASE_URL}
+      YUKIT_REDIS_URL: redis://redis:6379/0
+    networks:
+      - app
+      - edge
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: yukit-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: "${YUKIT_IMAGE_REPOSITORY:?set YUKIT_IMAGE_REPOSITORY}:api-latest"
+    container_name: yukit-migrate
+    pull_policy: always
+    profiles: ["ops"]
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      YUKIT_ENVIRONMENT: ${YUKIT_ENVIRONMENT:-production}
+      YUKIT_DEV_AUTH_ENABLED: ${YUKIT_DEV_AUTH_ENABLED:-false}
+      YUKIT_DATABASE_URL: ${YUKIT_DATABASE_URL:?set YUKIT_DATABASE_URL}
+      YUKIT_REDIS_URL: redis://redis:6379/0
+    networks:
+      - app
+      - edge
+    command: sh -c "cd /app/backend && alembic upgrade head"
+    restart: "no"
+
+volumes:
+  redis_data:
+
+networks:
+  app:
+    name: yukit-app
+  edge:
+    external: true
+    name: "${YUKIT_PROXY_NETWORK:?set YUKIT_PROXY_NETWORK}"
