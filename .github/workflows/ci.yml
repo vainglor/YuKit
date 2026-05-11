@@ -97,6 +97,9 @@ jobs:
         with:
           context: .
           file: Dockerfile.web
+          build-args: |
+            VITE_BASE_PATH=/yukit/
+            VITE_API_BASE_URL=/yukit/api
           push: ${{ env.PUSH_IMAGES == 'true' }}
           load: ${{ env.PUSH_IMAGES != 'true' }}
           tags: |

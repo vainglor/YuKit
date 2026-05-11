@@ -104,6 +104,15 @@ GitHub Actions 会通过公网 ACR 地址推送镜像。ECS 服务器会通过 V
 4. 构建并推送 `api-latest`、`api-<git-sha>`、`web-latest`、`web-<git-sha>`。
 5. SSH 登录 ECS，拉取镜像，执行数据库迁移，重启 YuKit 服务。
 
+生产前端镜像会按子路径构建：
+
+```text
+VITE_BASE_PATH=/yukit/
+VITE_API_BASE_URL=/yukit/api
+```
+
+如果以后不再使用 `/yukit` 子路径，而是改成独立域名根路径，需要同步修改 GitHub Actions 里的 `Build web image` 构建参数、OpenResty 反代规则、`YUKIT_PUBLIC_BASE_URL` 和 `YUKIT_API_BASE_URL`。
+
 ## 首次服务器配置
 
 在 ECS 上创建部署目录：
@@ -146,6 +155,7 @@ network-scoped aliases are only supported for user-defined networks
 - YuKit 的 `api` 绑定到 `127.0.0.1:18000`。
 - YuKit 的 `api`、`worker`、`migrate` 加入 PostgreSQL 所在的 `1panel-network`。
 - 数据库地址使用 `1Panel-postgresql-Dhce:5432`。
+- 外部访问路径使用 `http://120.25.195.126/yukit/`，不接管服务器根路径 `/`。
 
 创建 `/opt/yukit/.env`：
 
@@ -157,8 +167,8 @@ YUKIT_WEB_HTTP_BIND=127.0.0.1:18080
 YUKIT_API_HTTP_BIND=127.0.0.1:18000
 YUKIT_ENVIRONMENT=production
 YUKIT_DEV_AUTH_ENABLED=false
-YUKIT_PUBLIC_BASE_URL=http://120.25.195.126
-YUKIT_API_BASE_URL=http://120.25.195.126/api
+YUKIT_PUBLIC_BASE_URL=http://120.25.195.126/yukit
+YUKIT_API_BASE_URL=http://120.25.195.126/yukit/api
 YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@1Panel-postgresql-Dhce:5432/yukit
 YUKIT_REDIS_URL=redis://redis:6379/0
 YUKIT_SESSION_SECRET=<long-random-secret>
@@ -190,49 +200,70 @@ YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@yukit-postgres:5
 当前使用 IP 访问时，GitHub OAuth App 的回调地址配置为：
 
 ```text
-http://120.25.195.126/api/auth/github/callback
+http://120.25.195.126/yukit/api/auth/github/callback
 ```
 
 如果之后绑定域名和 HTTPS，需要同步修改：
 
 ```text
-YUKIT_PUBLIC_BASE_URL=https://你的域名
-YUKIT_API_BASE_URL=https://你的域名/api
+YUKIT_PUBLIC_BASE_URL=https://你的域名/yukit
+YUKIT_API_BASE_URL=https://你的域名/yukit/api
 ```
 
 GitHub OAuth App 的 callback 也要改成：
 
 ```text
-https://你的域名/api/auth/github/callback
+https://你的域名/yukit/api/auth/github/callback
 ```
 
 ## OpenResty 反向代理
 
-因为 OpenResty 容器使用 `host` 网络，所以它可以直接访问宿主机的 `127.0.0.1`。在现有 OpenResty 站点中添加以下规则：
+因为 OpenResty 容器使用 `host` 网络，所以它可以直接访问宿主机的 `127.0.0.1`。在现有 OpenResty 站点中添加以下规则，让 YuKit 挂到 `/yukit/` 子路径：
 
 ```nginx
-location = /api {
-    return 301 /api/;
+location = /yukit {
+    return 301 /yukit/;
 }
 
-location /api/ {
-    proxy_pass http://127.0.0.1:18000;
+location = /yukit/api {
+    return 301 /yukit/api/;
+}
+
+location /yukit/api/ {
+    proxy_pass http://127.0.0.1:18000/api/;
+    proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host $host;
+
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
 }
 
-location / {
-    proxy_pass http://127.0.0.1:18080;
+location /yukit/ {
+    proxy_pass http://127.0.0.1:18080/;
+    proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host $host;
+
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
 }
 ```
+
+注意两个 `proxy_pass` 结尾的 `/`：
+
+- `/yukit/api/` 会被转成后端的 `/api/`。
+- `/yukit/` 会被转成前端容器的 `/`。
+
+如果站点里已经有 `location / { ... }`，可以继续保留给原网站使用；这套规则只会接管 `/yukit` 路径。
 
 保存后重载 OpenResty。
 
@@ -241,6 +272,14 @@ location / {
 ```bash
 docker exec -it 1Panel-openresty-awUd sh -lc 'wget -qO- http://127.0.0.1:18080/health'
 docker exec -it 1Panel-openresty-awUd sh -lc 'wget -qO- http://127.0.0.1:18000/api/health'
+```
+
+从外部验证：
+
+```bash
+curl -i http://120.25.195.126/yukit/
+curl -i http://120.25.195.126/yukit/api/health
+curl -i http://120.25.195.126/yukit/api/ready
 ```
 
 ## 手动部署
@@ -254,7 +293,7 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml --profile ops run --rm migrate
 docker compose -f docker-compose.prod.yml up -d --remove-orphans redis api worker web
 docker compose -f docker-compose.prod.yml ps
-curl -fsS http://120.25.195.126/api/ready
+curl -fsS http://120.25.195.126/yukit/api/ready
 ```
 
 之后推送到 `main` 分支时，GitHub Actions 的 `deploy` job 会自动执行同样的拉镜像、迁移、重启和健康检查流程。
@@ -280,7 +319,7 @@ web-<git-sha>
 ```bash
 cd /opt/yukit
 docker compose -f docker-compose.prod.yml up -d api worker web
-curl -fsS http://120.25.195.126/api/ready
+curl -fsS http://120.25.195.126/yukit/api/ready
 ```
 
 ## 健康检查
@@ -294,7 +333,7 @@ Compose 内置健康检查：
 整体就绪检查：
 
 ```text
-GET /api/ready
+GET /yukit/api/ready
 ```
 
 `/api/ready` 会检查数据库和 Redis 状态，更适合作为部署后的验收接口。
