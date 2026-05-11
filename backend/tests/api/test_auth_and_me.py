@@ -189,7 +189,7 @@ def test_dev_login_sets_session_and_current_user(test_app) -> None:
 def test_auth_options_reports_local_login_availability(test_app, monkeypatch) -> None:
     from app.config import get_settings
 
-    monkeypatch.delenv("YUKIT_GITHUB_CLIENT_ID", raising=False)
+    monkeypatch.setenv("YUKIT_GITHUB_CLIENT_ID", "")
     get_settings.cache_clear()
 
     with TestClient(test_app) as client:
