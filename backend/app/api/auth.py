@@ -53,6 +53,34 @@ def request_id_from(request: Request) -> str:
     return getattr(request.state, "request_id", "unknown")
 
 
+def response_json(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def provider_unavailable_error(request: Request, exc: httpx.HTTPError) -> ApiError:
+    AUTH_LOGGER.error(
+        "GitHub OAuth provider unavailable error_type=%s request_id=%s",
+        exc.__class__.__name__,
+        request_id_from(request),
+        extra={
+            "provider": "github",
+            "event": "oauth_provider_unavailable",
+            "error_type": exc.__class__.__name__,
+            "request_id": request_id_from(request),
+        },
+    )
+    return ApiError(
+        status_code=502,
+        code="github_oauth_provider_unavailable",
+        message="GitHub OAuth provider is unavailable.",
+        detail={"provider_error": exc.__class__.__name__},
+    )
+
+
 @router.get("/me")
 async def get_me(user: User | None = Depends(optional_current_user)) -> dict[str, Any]:
     return {"user": serialize_user(user)}
@@ -207,36 +235,44 @@ async def github_callback(
         )
 
     async with httpx.AsyncClient(timeout=10) as client:
-        token_response = await client.post(
-            settings.github_oauth_token_url,
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": settings.github_client_id,
-                "client_secret": settings.github_client_secret,
-                "code": code,
-                "state": state,
-                "redirect_uri": github_callback_url(),
-            },
-        )
-        token_response.raise_for_status()
-        token_payload = token_response.json()
+        try:
+            token_response = await client.post(
+                settings.github_oauth_token_url,
+                headers={"Accept": "application/json"},
+                data={
+                    "client_id": settings.github_client_id,
+                    "client_secret": settings.github_client_secret,
+                    "code": code,
+                    "state": state,
+                    "redirect_uri": github_callback_url(),
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise provider_unavailable_error(request, exc) from exc
+
+        token_payload = response_json(token_response)
         token = token_payload.get("access_token")
         if not token:
             provider_error = token_payload.get("error")
             provider_description = token_payload.get("error_description")
             detail = {}
+            status_code = getattr(token_response, "status_code", 200)
             if provider_error:
                 detail["provider_error"] = provider_error
+            elif status_code >= 400:
+                detail["provider_error"] = f"http_{status_code}"
             if provider_description:
                 detail["provider_error_description"] = provider_description
             AUTH_LOGGER.warning(
                 "GitHub OAuth token exchange failed provider_error=%s request_id=%s",
-                provider_error or "missing_access_token",
+                provider_error or detail.get("provider_error") or "missing_access_token",
                 request_id_from(request),
                 extra={
                     "provider": "github",
                     "event": "oauth_token_failed",
-                    "provider_error": provider_error or "missing_access_token",
+                    "provider_error": provider_error
+                    or detail.get("provider_error")
+                    or "missing_access_token",
                     "request_id": request_id_from(request),
                 },
             )

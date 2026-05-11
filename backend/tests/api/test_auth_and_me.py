@@ -247,6 +247,97 @@ def test_github_callback_reports_provider_token_error(test_app, monkeypatch) -> 
     }
 
 
+def test_github_callback_reports_bad_verification_code_without_internal_error(
+    test_app,
+    monkeypatch,
+) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.github_client_id = "test-client-id"
+    settings.github_client_secret = "test-client-secret"
+
+    class GitHubResponse:
+        status_code = 400
+
+        def json(self):
+            return {
+                "error": "bad_verification_code",
+                "error_description": "The code passed is incorrect or expired.",
+            }
+
+    class GitHubClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        async def post(self, url, headers, data):
+            return GitHubResponse()
+
+    monkeypatch.setattr("app.api.auth.httpx.AsyncClient", GitHubClient)
+
+    with TestClient(test_app) as client:
+        client.cookies.set("yukit_oauth_state", "expected-state")
+        response = client.get(
+            "/api/auth/github/callback?code=expired-code&state=expected-state",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 401
+    error = response.json()["error"]
+    assert error["code"] == "github_oauth_failed"
+    assert error["message"] == "GitHub login failed: bad_verification_code"
+    assert error["detail"] == {
+        "provider_error": "bad_verification_code",
+        "provider_error_description": "The code passed is incorrect or expired.",
+    }
+
+
+def test_github_callback_reports_provider_timeout_without_internal_error(
+    test_app,
+    monkeypatch,
+) -> None:
+    import httpx
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.github_client_id = "test-client-id"
+    settings.github_client_secret = "test-client-secret"
+
+    class GitHubClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        async def post(self, url, headers, data):
+            raise httpx.ConnectTimeout("GitHub token endpoint timed out")
+
+    monkeypatch.setattr("app.api.auth.httpx.AsyncClient", GitHubClient)
+
+    with TestClient(test_app) as client:
+        client.cookies.set("yukit_oauth_state", "expected-state")
+        response = client.get(
+            "/api/auth/github/callback?code=valid-code&state=expected-state",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == "github_oauth_provider_unavailable"
+    assert error["message"] == "GitHub OAuth provider is unavailable."
+
+
 def test_github_callback_rejects_state_mismatch_before_token_exchange(
     test_app,
     monkeypatch,
