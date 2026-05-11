@@ -70,6 +70,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
     env:
       IMAGE_REPOSITORY: ${{ secrets.ACR_IMAGE_REPOSITORY || 'local/yukit' }}
       PUSH_IMAGES: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.ACR_IMAGE_REPOSITORY != '' && secrets.ACR_REGISTRY != '' && secrets.ACR_USERNAME != '' && secrets.ACR_PASSWORD != '' }}
@@ -106,15 +107,15 @@ jobs:
             ${{ env.IMAGE_REPOSITORY }}:web-${{ github.sha }}
             ${{ env.IMAGE_REPOSITORY }}:web-latest
       - uses: aquasecurity/trivy-action@v0.36.0
+        if: env.PUSH_IMAGES == 'true'
         with:
           image-ref: ${{ env.IMAGE_REPOSITORY }}:api-${{ github.sha }}
           format: sarif
           output: trivy-results.sarif
+      - uses: github/codeql-action/upload-sarif@v4
         if: env.PUSH_IMAGES == 'true'
-      - uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-        if: env.PUSH_IMAGES == 'true'
 
   deploy:
     runs-on: ubuntu-latest
