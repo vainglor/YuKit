@@ -156,7 +156,12 @@ jobs:
             set -eu
             cd "${{ secrets.DEPLOY_PATH }}"
             test -f .env || { echo "Missing ${{ secrets.DEPLOY_PATH }}/.env"; exit 1; }
-            echo "${{ secrets.ACR_PASSWORD }}" | docker login --username "${{ secrets.ACR_USERNAME }}" --password-stdin "${{ secrets.ACR_PULL_REGISTRY }}"
+            test -n "${{ secrets.ACR_REGISTRY }}" || { echo "Missing ACR_REGISTRY"; exit 1; }
+            test -n "${{ secrets.ACR_IMAGE_REPOSITORY }}" || { echo "Missing ACR_IMAGE_REPOSITORY"; exit 1; }
+            awk '!/^YUKIT_IMAGE_REPOSITORY=/' .env > .env.tmp
+            printf 'YUKIT_IMAGE_REPOSITORY=%s\n' "${{ secrets.ACR_IMAGE_REPOSITORY }}" >> .env.tmp
+            mv .env.tmp .env
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login --username "${{ secrets.ACR_USERNAME }}" --password-stdin "${{ secrets.ACR_REGISTRY }}"
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml --profile ops run --rm migrate
             docker compose -f docker-compose.prod.yml up -d --remove-orphans redis api worker web

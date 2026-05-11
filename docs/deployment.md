@@ -84,7 +84,6 @@ YuKit 当前服务器属于第二种情况：服务器已经有 OpenResty 容器
 ```text
 ACR_REGISTRY=crpi-a848fntml5lhz63u.cn-shenzhen.personal.cr.aliyuncs.com
 ACR_IMAGE_REPOSITORY=crpi-a848fntml5lhz63u.cn-shenzhen.personal.cr.aliyuncs.com/aliyun_neeko/yukit
-ACR_PULL_REGISTRY=crpi-a848fntml5lhz63u-vpc.cn-shenzhen.personal.cr.aliyuncs.com
 ACR_USERNAME=dbp1906
 ACR_PASSWORD=<acr-password>
 SERVER_HOST=120.25.195.126
@@ -94,9 +93,9 @@ SERVER_SSH_KEY=<private-key>
 DEPLOY_PATH=/opt/yukit
 ```
 
-这些 ACR 地址必须和阿里云控制台显示的实例域名完全一致。比如你能 `docker login` 成功的域名是 `crpi-a848fntml5lhz63u...`，那么 `ACR_REGISTRY`、`ACR_IMAGE_REPOSITORY`、`ACR_PULL_REGISTRY` 和服务器 `.env` 里的 `YUKIT_IMAGE_REPOSITORY` 都要使用同一个 `crpi-a848fntml5lhz63u` 前缀，不能混用相近的拼写。
+这些 ACR 地址必须和阿里云控制台显示的实例域名完全一致。比如你能 `docker login` 成功的域名是 `crpi-a848fntml5lhz63u...`，那么 `ACR_REGISTRY`、`ACR_IMAGE_REPOSITORY` 和服务器 `.env` 里的 `YUKIT_IMAGE_REPOSITORY` 都要使用同一个 `crpi-a848fntml5lhz63u` 前缀，不能混用相近的拼写。
 
-GitHub Actions 会通过公网 ACR 地址推送镜像。ECS 服务器会通过 VPC ACR 地址拉取镜像，这样速度更稳定，也不会消耗公网流量。
+GitHub Actions 会通过公网 ACR 地址推送镜像，ECS 服务器默认也通过公网 ACR 地址拉取镜像。不要默认使用 `-vpc` 域名；如果服务器无法解析 VPC ACR 域名，会在 `docker compose pull` 时报 `lookup ...-vpc... no such host`。
 
 推送到 `main` 分支时，CI/CD 会自动执行：
 
@@ -171,7 +170,7 @@ network-scoped aliases are only supported for user-defined networks
 
 ```bash
 cat > /opt/yukit/.env <<'EOF'
-YUKIT_IMAGE_REPOSITORY=crpi-a848fntml5lhz63u-vpc.cn-shenzhen.personal.cr.aliyuncs.com/aliyun_neeko/yukit
+YUKIT_IMAGE_REPOSITORY=crpi-a848fntml5lhz63u.cn-shenzhen.personal.cr.aliyuncs.com/aliyun_neeko/yukit
 YUKIT_DB_NETWORK=1panel-network
 YUKIT_WEB_HTTP_BIND=127.0.0.1:18080
 YUKIT_API_HTTP_BIND=127.0.0.1:18000
@@ -197,6 +196,12 @@ docker compose -f docker-compose.prod.yml config | grep 'image:'
 ```
 
 正常情况下，最后一条命令应该能看到 `aliyun_neeko/yukit:web-latest`、`aliyun_neeko/yukit:api-latest` 和 `redis:7-alpine`。如果看到 `ACR_REGISTRY`、`ACR_NAMESPACE` 相关 warning，或者看到 `//yukit:latest`，说明 `/opt/yukit/docker-compose.prod.yml` 还是旧版，或者服务器没有加载当前文档里的 `.env` 配置；先重新同步 compose，再继续拉镜像。
+
+如果看到 `lookup crpi-...-vpc... no such host`，说明服务器当前不能解析阿里云 ACR 的 VPC 域名。把 `/opt/yukit/.env` 中的 `YUKIT_IMAGE_REPOSITORY` 改回公网域名：
+
+```text
+YUKIT_IMAGE_REPOSITORY=crpi-a848fntml5lhz63u.cn-shenzhen.personal.cr.aliyuncs.com/aliyun_neeko/yukit
+```
 
 如果使用已有 PostgreSQL，需要在里面创建 `yukit` 数据库和对应用户。可以通过 1Panel 数据库管理界面创建，也可以进入 PostgreSQL 容器使用 `psql` 创建。
 
@@ -311,7 +316,7 @@ curl -i http://120.25.195.126/yukit/api/ready
 cd /opt/yukit
 grep -q 'YUKIT_IMAGE_REPOSITORY' docker-compose.prod.yml || { echo 'docker-compose.prod.yml 不是当前版本，请重新同步'; exit 1; }
 docker compose -f docker-compose.prod.yml config >/dev/null
-docker login --username dbp1906 crpi-a848fntml5lhz63u-vpc.cn-shenzhen.personal.cr.aliyuncs.com
+docker login --username dbp1906 crpi-a848fntml5lhz63u.cn-shenzhen.personal.cr.aliyuncs.com
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml --profile ops run --rm migrate
 docker compose -f docker-compose.prod.yml up -d --remove-orphans redis api worker web
