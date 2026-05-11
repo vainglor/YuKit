@@ -11,6 +11,7 @@ from app.db.models import ToolExecution, User
 from app.db.session import get_db_session
 from app.dependencies import get_redis
 from app.errors import ApiError
+from app.observability import TOOL_LOGGER
 from app.queue.client import get_arq_pool
 from app.services.rate_limits import RateLimit, check_rate_limit
 from app.tools.base import ToolAccessLevel, ToolExecutionMode
@@ -43,6 +44,34 @@ def _client_key(request: Request, user: User | None) -> str:
         return f"user:{user.id}"
     host = request.client.host if request.client else "unknown"
     return f"ip:{host}"
+
+
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "unknown")
+
+
+def _tool_log_extra(
+    request: Request,
+    *,
+    tool_name: str,
+    status: str,
+    mode: str,
+    execution_id: str = "",
+    duration_ms: int | None = None,
+    user: User | None = None,
+) -> dict[str, object]:
+    extra: dict[str, object] = {
+        "request_id": _request_id(request),
+        "tool": tool_name,
+        "status": status,
+        "mode": mode,
+        "execution_id": execution_id,
+    }
+    if duration_ms is not None:
+        extra["duration_ms"] = duration_ms
+    if user is not None:
+        extra["user_id"] = user.id
+    return extra
 
 
 async def _create_execution(
@@ -96,6 +125,19 @@ async def run_tool(
         input_data = tool.input_model.model_validate(payload.input)
         options = tool.option_model.model_validate(payload.options)
     except ValidationError as exc:
+        TOOL_LOGGER.warning(
+            "tool run rejected tool=%s status=invalid_input mode=%s request_id=%s",
+            tool.name,
+            tool.execution_mode,
+            _request_id(request),
+            extra=_tool_log_extra(
+                request,
+                tool_name=tool.name,
+                status="invalid_input",
+                mode=tool.execution_mode,
+                user=user,
+            ),
+        )
         raise ApiError(
             status_code=422,
             code="invalid_input",
@@ -129,6 +171,20 @@ async def run_tool(
             )
         await pool.enqueue_job("run_tool_job", execution.id, payload.input, payload.options)
         await pool.aclose()
+        TOOL_LOGGER.info(
+            "tool run queued tool=%s execution_id=%s mode=async request_id=%s",
+            tool.name,
+            execution.id,
+            _request_id(request),
+            extra=_tool_log_extra(
+                request,
+                tool_name=tool.name,
+                status="queued",
+                mode="async",
+                execution_id=execution.id,
+                user=user,
+            ),
+        )
         return {
             "execution_id": execution.id,
             "tool": tool.name,
@@ -156,6 +212,21 @@ async def run_tool(
             execution.error_message = str(exc)
             execution.duration_ms = int((time.perf_counter() - started) * 1000)
             await db.commit()
+        TOOL_LOGGER.warning(
+            "tool run failed tool=%s status=failed mode=%s request_id=%s",
+            tool.name,
+            tool.execution_mode,
+            _request_id(request),
+            extra=_tool_log_extra(
+                request,
+                tool_name=tool.name,
+                status="failed",
+                mode=tool.execution_mode,
+                execution_id=execution.id if execution else "",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                user=user,
+            ),
+        )
         raise ApiError(status_code=422, code=error_code, message=str(exc)) from exc
 
     duration_ms = int((time.perf_counter() - started) * 1000)
@@ -164,6 +235,23 @@ async def run_tool(
         execution.duration_ms = duration_ms
         execution.result_json = result.model_dump()
         await db.commit()
+    TOOL_LOGGER.info(
+        "tool run succeeded tool=%s execution_id=%s mode=%s duration_ms=%s request_id=%s",
+        tool.name,
+        execution.id if execution else "",
+        tool.execution_mode,
+        duration_ms,
+        _request_id(request),
+        extra=_tool_log_extra(
+            request,
+            tool_name=tool.name,
+            status="succeeded",
+            mode=tool.execution_mode,
+            execution_id=execution.id if execution else "",
+            duration_ms=duration_ms,
+            user=user,
+        ),
+    )
     return {
         "execution_id": execution.id if execution else "",
         "tool": tool.name,

@@ -18,6 +18,46 @@ def test_github_start_uses_api_prefixed_callback_url(test_app) -> None:
     assert location.params["redirect_uri"] == "http://localhost:8000/api/auth/github/callback"
 
 
+def test_github_start_uses_subpath_callback_url_and_http_cookie_in_http_production(
+    test_app,
+) -> None:
+    import httpx
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.environment = "production"
+    settings.github_client_id = "test-client-id"
+    settings.api_base_url = "http://120.25.195.126/yukit/api"
+
+    with TestClient(test_app) as client:
+        response = client.get("/api/auth/github/start", follow_redirects=False)
+
+    assert response.status_code == 307
+    location = httpx.URL(response.headers["location"])
+    assert location.params["redirect_uri"] == (
+        "http://120.25.195.126/yukit/api/auth/github/callback"
+    )
+    assert "yukit_oauth_state=" in response.headers["set-cookie"]
+    assert "Secure" not in response.headers["set-cookie"]
+
+
+def test_github_start_uses_secure_cookie_for_https_production(test_app) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.environment = "production"
+    settings.github_client_id = "test-client-id"
+    settings.api_base_url = "https://tools.example.com/yukit/api"
+
+    with TestClient(test_app) as client:
+        response = client.get("/api/auth/github/start", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert "yukit_oauth_state=" in response.headers["set-cookie"]
+    assert "Secure" in response.headers["set-cookie"]
+
+
 def test_github_callback_creates_session_from_verified_email(test_app, monkeypatch) -> None:
     from app.config import get_settings
 
@@ -91,6 +131,71 @@ def test_github_callback_creates_session_from_verified_email(test_app, monkeypat
     assert user["email"] == "octocat@example.com"
     assert user["display_name"] == "Octo Cat"
     assert user["avatar_url"] == "https://avatars.example/octocat.png"
+
+
+def test_github_callback_sets_http_session_cookie_in_http_production(
+    test_app,
+    monkeypatch,
+) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.environment = "production"
+    settings.github_client_id = "test-client-id"
+    settings.github_client_secret = "test-client-secret"
+    settings.public_base_url = "http://120.25.195.126/yukit"
+    settings.api_base_url = "http://120.25.195.126/yukit/api"
+
+    class GitHubResponse:
+        def __init__(self, payload) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return self._payload
+
+    class GitHubClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        async def post(self, url, headers, data):
+            assert data["redirect_uri"] == "http://120.25.195.126/yukit/api/auth/github/callback"
+            return GitHubResponse({"access_token": "github-token"})
+
+        async def get(self, url, headers):
+            if url == settings.github_api_user_url:
+                return GitHubResponse(
+                    {
+                        "id": 12345,
+                        "login": "octocat",
+                        "name": "Octo Cat",
+                        "email": "octocat@example.com",
+                        "avatar_url": "https://avatars.example/octocat.png",
+                    }
+                )
+            raise AssertionError(f"Unexpected GitHub API URL: {url}")
+
+    monkeypatch.setattr("app.api.auth.httpx.AsyncClient", GitHubClient)
+
+    with TestClient(test_app) as client:
+        client.cookies.set("yukit_oauth_state", "expected-state")
+        callback_response = client.get(
+            "/api/auth/github/callback?code=valid-code&state=expected-state",
+            follow_redirects=False,
+        )
+
+    assert callback_response.status_code == 307
+    assert callback_response.headers["location"] == "http://120.25.195.126/yukit"
+    assert "yukit_session=" in callback_response.headers["set-cookie"]
+    assert "Secure" not in callback_response.headers["set-cookie"]
 
 
 def test_github_callback_reports_provider_token_error(test_app, monkeypatch) -> None:

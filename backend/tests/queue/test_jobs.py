@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import pytest
 from pydantic import BaseModel
@@ -32,6 +33,33 @@ async def test_run_tool_job_updates_execution(db_session) -> None:
     saved = result.scalar_one()
     assert saved.status == "succeeded"
     assert saved.result_json["formatted"] == '{\n  "a": 2,\n  "b": 1\n}'
+
+
+@pytest.mark.asyncio
+async def test_run_tool_job_logs_lifecycle_without_input_payload(db_session, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="yukit.worker")
+
+    execution = ToolExecution(
+        tool_name="json-format",
+        status="queued",
+        execution_mode="async",
+        options_json={"indent": 2, "sort_keys": True, "ensure_ascii": False},
+    )
+    db_session.add(execution)
+    await db_session.commit()
+
+    await run_tool_job(
+        {},
+        execution.id,
+        {"text": '{"secret":"do-not-log"}'},
+        {"indent": 2, "sort_keys": True, "ensure_ascii": False},
+    )
+
+    worker_logs = [record for record in caplog.records if record.name == "yukit.worker"]
+    assert [record.status for record in worker_logs] == ["running", "succeeded"]
+    assert all(record.execution_id == execution.id for record in worker_logs)
+    assert all(record.tool == "json-format" for record in worker_logs)
+    assert "do-not-log" not in "\n".join(record.getMessage() for record in worker_logs)
 
 
 @pytest.mark.asyncio

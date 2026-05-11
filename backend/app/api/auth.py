@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db.models import User
 from app.db.session import get_db_session
 from app.errors import ApiError
+from app.observability import AUTH_LOGGER
 from app.services.users import create_user_session, get_or_create_user, link_identity
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -46,6 +47,10 @@ def serialize_user(user: User | None) -> dict[str, Any] | None:
 
 def github_callback_url() -> str:
     return f"{str(get_settings().api_base_url).rstrip('/')}/auth/github/callback"
+
+
+def request_id_from(request: Request) -> str:
+    return getattr(request.state, "request_id", "unknown")
 
 
 @router.get("/me")
@@ -126,9 +131,20 @@ async def github_start(response: Response) -> RedirectResponse:
         "yukit_oauth_state",
         state,
         httponly=True,
-        secure=settings.environment == "production",
+        secure=settings.effective_cookie_secure,
         samesite="lax",
         path="/",
+    )
+    AUTH_LOGGER.info(
+        "GitHub OAuth start redirect_uri=%s cookie_secure=%s",
+        github_callback_url(),
+        settings.effective_cookie_secure,
+        extra={
+            "provider": "github",
+            "event": "oauth_start",
+            "redirect_uri": github_callback_url(),
+            "cookie_secure": settings.effective_cookie_secure,
+        },
     )
     return response
 
@@ -143,18 +159,47 @@ async def github_callback(
     settings = get_settings()
     expected_state = request.cookies.get("yukit_oauth_state")
     if not expected_state or not secrets.compare_digest(expected_state, state):
+        AUTH_LOGGER.warning(
+            "OAuth state validation failed provider=github expected_state_present=%s request_id=%s",
+            bool(expected_state),
+            request_id_from(request),
+            extra={
+                "provider": "github",
+                "event": "oauth_state_mismatch",
+                "expected_state_present": bool(expected_state),
+                "request_id": request_id_from(request),
+            },
+        )
         raise ApiError(
             status_code=401,
             code="oauth_state_mismatch",
             message="OAuth state validation failed.",
         )
     if db is None:
+        AUTH_LOGGER.error(
+            "OAuth callback database unavailable provider=github request_id=%s",
+            request_id_from(request),
+            extra={
+                "provider": "github",
+                "event": "database_unavailable",
+                "request_id": request_id_from(request),
+            },
+        )
         raise ApiError(
             status_code=503,
             code="database_unavailable",
             message="Database is unavailable",
         )
     if not settings.github_client_id or not settings.github_client_secret:
+        AUTH_LOGGER.error(
+            "GitHub OAuth is not configured request_id=%s",
+            request_id_from(request),
+            extra={
+                "provider": "github",
+                "event": "oauth_unconfigured",
+                "request_id": request_id_from(request),
+            },
+        )
         raise ApiError(
             status_code=503,
             code="github_oauth_unconfigured",
@@ -184,6 +229,17 @@ async def github_callback(
                 detail["provider_error"] = provider_error
             if provider_description:
                 detail["provider_error_description"] = provider_description
+            AUTH_LOGGER.warning(
+                "GitHub OAuth token exchange failed provider_error=%s request_id=%s",
+                provider_error or "missing_access_token",
+                request_id_from(request),
+                extra={
+                    "provider": "github",
+                    "event": "oauth_token_failed",
+                    "provider_error": provider_error or "missing_access_token",
+                    "request_id": request_id_from(request),
+                },
+            )
             raise ApiError(
                 status_code=401,
                 code="github_oauth_failed",
@@ -212,6 +268,15 @@ async def github_callback(
             email = primary.get("email", "")
 
     if not email:
+        AUTH_LOGGER.warning(
+            "GitHub email is unavailable request_id=%s",
+            request_id_from(request),
+            extra={
+                "provider": "github",
+                "event": "github_email_missing",
+                "request_id": request_id_from(request),
+            },
+        )
         raise ApiError(
             status_code=401,
             code="github_email_missing",
@@ -237,4 +302,15 @@ async def github_callback(
     redirect = RedirectResponse(str(settings.public_base_url))
     set_session_cookie(redirect, sign_session(user.id, session.id))
     redirect.delete_cookie("yukit_oauth_state", path="/")
+    AUTH_LOGGER.info(
+        "GitHub OAuth callback succeeded user_id=%s request_id=%s",
+        user.id,
+        request_id_from(request),
+        extra={
+            "provider": "github",
+            "event": "oauth_callback_succeeded",
+            "user_id": user.id,
+            "request_id": request_id_from(request),
+        },
+    )
     return redirect

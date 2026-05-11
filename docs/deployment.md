@@ -181,10 +181,16 @@ YUKIT_API_BASE_URL=http://120.25.195.126/yukit/api
 YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@1Panel-postgresql-Dhce:5432/yukit
 YUKIT_REDIS_URL=redis://redis:6379/0
 YUKIT_SESSION_SECRET=<long-random-secret>
+YUKIT_LOG_LEVEL=INFO
+YUKIT_LOG_FORMAT=json
+YUKIT_LOG_MAX_SIZE=10m
+YUKIT_LOG_MAX_FILE=5
 YUKIT_GITHUB_CLIENT_ID=<github-oauth-client-id>
 YUKIT_GITHUB_CLIENT_SECRET=<github-oauth-client-secret>
 EOF
 ```
+
+`YUKIT_COOKIE_SECURE` 默认不需要设置：后端会根据 `YUKIT_API_BASE_URL` 是否使用 `https://` 自动决定是否给 OAuth 和 session cookie 加 `Secure`。当前用 HTTP IP 访问时应保持自动或设为 `false`；绑定 HTTPS 域名后应保持自动或设为 `true`。
 
 创建 `.env` 并同步 compose 后，先做一次配置校验：
 
@@ -228,6 +234,14 @@ YUKIT_DATABASE_URL=postgresql+asyncpg://<db-user>:<db-password>@yukit-postgres:5
 ```text
 http://120.25.195.126/yukit/api/auth/github/callback
 ```
+
+如果登录后浏览器跳到了 `http://120.25.195.126/api/auth/github/callback?...`，说明服务器 `/opt/yukit/.env` 里的 `YUKIT_API_BASE_URL` 少了 `/yukit`，需要改成：
+
+```text
+YUKIT_API_BASE_URL=http://120.25.195.126/yukit/api
+```
+
+改完后重启 API、worker 和 web，再重新从网页登录。旧的 GitHub `code` 只能使用一次，不能拿旧 callback 地址重复刷新。
 
 如果之后绑定域名和 HTTPS，需要同步修改：
 
@@ -366,6 +380,47 @@ GET /yukit/api/ready
 
 `/api/ready` 会检查数据库和 Redis 状态，更适合作为部署后的验收接口。
 
+## 日志
+
+生产 Compose 默认使用 Docker `json-file` 日志驱动，并限制单容器日志为 `YUKIT_LOG_MAX_SIZE` x `YUKIT_LOG_MAX_FILE`，默认约 50MB，避免日志无限占满磁盘。
+
+后端会输出以下 logger：
+
+- `yukit.app`：启动配置摘要，包括环境、公网地址、API 地址和 cookie secure 策略。
+- `yukit.request`：每个 HTTP 请求的 method、path、status、duration_ms、request_id。
+- `yukit.error`：API 错误码、状态码、path、request_id。
+- `yukit.auth`：GitHub OAuth 开始、state 校验失败、token 失败、登录成功等认证事件。
+- `yukit.tool`：工具请求入队、同步工具成功或失败。
+- `yukit.worker`：异步 worker 任务 running、succeeded、timed_out、failed、canceled。
+
+这些日志不会记录请求 query string、OAuth `code/state` 或工具输入正文。排查登录问题时，优先看 API 日志：
+
+```bash
+cd /opt/yukit
+docker compose -f docker-compose.prod.yml logs -f api
+```
+
+按 request id 追踪一次请求：
+
+```bash
+docker compose -f docker-compose.prod.yml logs api | grep 'req_'
+```
+
+排查 GitHub 登录：
+
+```bash
+docker compose -f docker-compose.prod.yml logs api | grep 'yukit.auth'
+docker compose -f docker-compose.prod.yml logs api | grep 'oauth_state_mismatch'
+docker compose -f docker-compose.prod.yml logs api | grep 'redirect_uri'
+```
+
+排查异步工具：
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f api worker
+docker compose -f docker-compose.prod.yml logs worker | grep 'worker job'
+```
+
 ## 数据备份
 
 生产环境使用已有 PostgreSQL 容器，因此优先使用 1Panel 的数据库备份能力。
@@ -391,6 +446,7 @@ Redis 不是用户数据的最终来源，但生产 Compose 已开启 AOF 持久
 - 生产环境保持 `YUKIT_DEV_AUTH_ENABLED=false`。
 - 使用足够长且随机的 `YUKIT_SESSION_SECRET`。
 - GitHub OAuth callback 必须和 `YUKIT_API_BASE_URL` 对应。
+- Docker stdout 会输出结构化后端日志；需要更详细日志时可设置 `YUKIT_LOG_LEVEL=DEBUG` 后重启服务。
 - `YUKIT_ENVIRONMENT=production` 时，API 文档默认不会开放。
 - OAuth callback 会校验 state，防止伪造回调。
 - 如果使用 HTTP IP 访问，GitHub OAuth 可以工作，但正式对外建议绑定域名并启用 HTTPS。

@@ -34,7 +34,7 @@ def session_expires_at() -> datetime:
 
 
 def set_session_cookie(response: Response, value: str) -> None:
-    secure = get_settings().environment == "production"
+    secure = get_settings().effective_cookie_secure
     response.set_cookie(
         SESSION_COOKIE,
         value,

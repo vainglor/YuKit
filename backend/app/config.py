@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
     docs_enabled: bool = True
     dev_auth_enabled: bool = False
+    cookie_secure: bool | None = None
+    log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
     github_client_id: str = ""
     github_client_secret: str = ""
     github_oauth_authorize_url: str = "https://github.com/login/oauth/authorize"
@@ -28,6 +32,12 @@ class Settings(BaseSettings):
     @property
     def effective_docs_enabled(self) -> bool:
         return self.environment != "production" and self.docs_enabled
+
+    @property
+    def effective_cookie_secure(self) -> bool:
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return urlparse(str(self.api_base_url)).scheme == "https"
 
 
 @lru_cache
