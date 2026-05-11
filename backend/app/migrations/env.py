@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
+from app.db.migration_url import sync_database_url
 from app.db.models import Base
 
 config = context.config
@@ -17,7 +18,7 @@ def database_url() -> str:
     url = get_settings().database_url
     if not url:
         raise RuntimeError("YUKIT_DATABASE_URL is required for migrations")
-    return url.replace("+asyncpg", "").replace("+aiosqlite", "")
+    return sync_database_url(url)
 
 
 def run_migrations_offline() -> None:

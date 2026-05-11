@@ -1,6 +1,147 @@
 from fastapi.testclient import TestClient
 
 
+def test_github_start_uses_api_prefixed_callback_url(test_app) -> None:
+    import httpx
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.github_client_id = "test-client-id"
+
+    with TestClient(test_app) as client:
+        response = client.get("/api/auth/github/start", follow_redirects=False)
+
+    assert response.status_code == 307
+    location = httpx.URL(response.headers["location"])
+    assert location.params["client_id"] == "test-client-id"
+    assert location.params["redirect_uri"] == "http://localhost:8000/api/auth/github/callback"
+
+
+def test_github_callback_creates_session_from_verified_email(test_app, monkeypatch) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.github_client_id = "test-client-id"
+    settings.github_client_secret = "test-client-secret"
+    settings.public_base_url = "http://frontend.test"
+
+    class GitHubResponse:
+        def __init__(self, payload) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return self._payload
+
+    class GitHubClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        async def post(self, url, headers, data):
+            assert url == settings.github_oauth_token_url
+            assert data["client_id"] == "test-client-id"
+            assert data["client_secret"] == "test-client-secret"
+            assert data["code"] == "valid-code"
+            assert data["state"] == "expected-state"
+            assert data["redirect_uri"] == "http://localhost:8000/api/auth/github/callback"
+            return GitHubResponse({"access_token": "github-token"})
+
+        async def get(self, url, headers):
+            assert headers["Authorization"] == "Bearer github-token"
+            if url == settings.github_api_user_url:
+                return GitHubResponse(
+                    {
+                        "id": 12345,
+                        "login": "octocat",
+                        "name": "Octo Cat",
+                        "email": "",
+                        "avatar_url": "https://avatars.example/octocat.png",
+                    }
+                )
+            if url == settings.github_api_emails_url:
+                return GitHubResponse(
+                    [{"email": "octocat@example.com", "primary": True, "verified": True}]
+                )
+            raise AssertionError(f"Unexpected GitHub API URL: {url}")
+
+    monkeypatch.setattr("app.api.auth.httpx.AsyncClient", GitHubClient)
+
+    with TestClient(test_app) as client:
+        client.cookies.set("yukit_oauth_state", "expected-state")
+        callback_response = client.get(
+            "/api/auth/github/callback?code=valid-code&state=expected-state",
+            follow_redirects=False,
+        )
+        me_response = client.get("/api/auth/me")
+
+    assert callback_response.status_code == 307
+    assert callback_response.headers["location"] == "http://frontend.test"
+    assert "yukit_session=" in callback_response.headers["set-cookie"]
+    assert me_response.status_code == 200
+    user = me_response.json()["user"]
+    assert user["email"] == "octocat@example.com"
+    assert user["display_name"] == "Octo Cat"
+    assert user["avatar_url"] == "https://avatars.example/octocat.png"
+
+
+def test_github_callback_reports_provider_token_error(test_app, monkeypatch) -> None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.github_client_id = "test-client-id"
+    settings.github_client_secret = "wrong-secret"
+
+    class GitHubResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "error": "incorrect_client_credentials",
+                "error_description": "The client_id and/or client_secret passed are incorrect.",
+            }
+
+    class GitHubClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        async def post(self, url, headers, data):
+            return GitHubResponse()
+
+    monkeypatch.setattr("app.api.auth.httpx.AsyncClient", GitHubClient)
+
+    with TestClient(test_app) as client:
+        client.cookies.set("yukit_oauth_state", "expected-state")
+        response = client.get(
+            "/api/auth/github/callback?code=valid-code&state=expected-state",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 401
+    error = response.json()["error"]
+    assert error["code"] == "github_oauth_failed"
+    assert error["message"] == "GitHub login failed: incorrect_client_credentials"
+    assert error["detail"] == {
+        "provider_error": "incorrect_client_credentials",
+        "provider_error_description": "The client_id and/or client_secret passed are incorrect.",
+    }
+
+
 def test_github_callback_rejects_state_mismatch_before_token_exchange(
     test_app,
     monkeypatch,
@@ -45,7 +186,12 @@ def test_dev_login_sets_session_and_current_user(test_app) -> None:
     assert me_response.json()["user"]["email"] == "dev@example.com"
 
 
-def test_auth_options_reports_local_login_availability(test_app) -> None:
+def test_auth_options_reports_local_login_availability(test_app, monkeypatch) -> None:
+    from app.config import get_settings
+
+    monkeypatch.delenv("YUKIT_GITHUB_CLIENT_ID", raising=False)
+    get_settings.cache_clear()
+
     with TestClient(test_app) as client:
         response = client.get("/api/auth/options")
 

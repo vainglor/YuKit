@@ -62,6 +62,8 @@ cd ..
 $env:YUKIT_DATABASE_URL="sqlite+aiosqlite:///D:/DevProjects/YuKit/.logs/dev.db"
 $env:YUKIT_DEV_AUTH_ENABLED="true"
 $env:YUKIT_REDIS_URL=""
+$env:YUKIT_PUBLIC_BASE_URL="http://127.0.0.1:5173"
+$env:YUKIT_API_BASE_URL="http://127.0.0.1:8000/api"
 cd backend
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -87,6 +89,20 @@ http://127.0.0.1:5173
 ```
 
 本地开发模式下点击 `Sign in` 会优先使用 dev login。如果 dev login 不可用，前端会跳转到 GitHub OAuth。
+
+如果要在快速本地开发模式下测试 GitHub 登录，请在 GitHub OAuth App 中配置：
+
+```text
+Homepage URL: http://127.0.0.1:5173
+Authorization callback URL: http://127.0.0.1:8000/api/auth/github/callback
+```
+
+然后给后端进程追加：
+
+```powershell
+$env:YUKIT_GITHUB_CLIENT_ID="你的 GitHub OAuth Client ID"
+$env:YUKIT_GITHUB_CLIENT_SECRET="你的 GitHub OAuth Client Secret"
+```
 
 ## 4. 完整 Docker Compose 模式
 
@@ -120,6 +136,13 @@ YUKIT_GITHUB_CLIENT_ID=你的 GitHub OAuth Client ID
 YUKIT_GITHUB_CLIENT_SECRET=你的 GitHub OAuth Client Secret
 YUKIT_PUBLIC_BASE_URL=http://localhost:8080
 YUKIT_API_BASE_URL=http://localhost:8080/api
+```
+
+对应的 GitHub OAuth App 配置是：
+
+```text
+Homepage URL: http://localhost:8080
+Authorization callback URL: http://localhost:8080/api/auth/github/callback
 ```
 
 ### 4.3 启动完整服务

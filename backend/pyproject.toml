@@ -13,6 +13,7 @@ dependencies = [
   "httpx>=0.27",
   "itsdangerous>=2.2",
   "pydantic-settings>=2.7",
+  "psycopg[binary]>=3.2",
   "regex>=2024.11",
   "redis>=5.2",
   "sqlalchemy[asyncio]>=2.0",

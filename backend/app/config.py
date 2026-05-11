@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     environment: Literal["local", "test", "production"] = "local"
     app_name: str = "YuKit"
     public_base_url: str = "http://localhost:5173"
-    api_base_url: str = "http://localhost:8000"
+    api_base_url: str = "http://localhost:8000/api"
     database_url: str = ""
     redis_url: str = ""
     session_secret: str = Field(default="local-dev-session-secret-change-me", min_length=32)

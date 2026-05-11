@@ -44,6 +44,10 @@ def serialize_user(user: User | None) -> dict[str, Any] | None:
     }
 
 
+def github_callback_url() -> str:
+    return f"{str(get_settings().api_base_url).rstrip('/')}/auth/github/callback"
+
+
 @router.get("/me")
 async def get_me(user: User | None = Depends(optional_current_user)) -> dict[str, Any]:
     return {"user": serialize_user(user)}
@@ -109,11 +113,10 @@ async def github_start(response: Response) -> RedirectResponse:
         )
 
     state = secrets.token_urlsafe(24)
-    redirect_uri = f"{str(settings.api_base_url).rstrip('/')}/auth/github/callback"
     url = httpx.URL(settings.github_oauth_authorize_url).copy_merge_params(
         {
             "client_id": settings.github_client_id,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": github_callback_url(),
             "scope": "read:user user:email",
             "state": state,
         }
@@ -167,15 +170,29 @@ async def github_callback(
                 "client_secret": settings.github_client_secret,
                 "code": code,
                 "state": state,
+                "redirect_uri": github_callback_url(),
             },
         )
         token_response.raise_for_status()
-        token = token_response.json().get("access_token")
+        token_payload = token_response.json()
+        token = token_payload.get("access_token")
         if not token:
+            provider_error = token_payload.get("error")
+            provider_description = token_payload.get("error_description")
+            detail = {}
+            if provider_error:
+                detail["provider_error"] = provider_error
+            if provider_description:
+                detail["provider_error_description"] = provider_description
             raise ApiError(
                 status_code=401,
                 code="github_oauth_failed",
-                message="GitHub login failed",
+                message=(
+                    f"GitHub login failed: {provider_error}"
+                    if provider_error
+                    else "GitHub login failed"
+                ),
+                detail=detail,
             )
 
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
