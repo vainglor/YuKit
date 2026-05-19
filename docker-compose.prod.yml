@@ -6,6 +6,15 @@ x-logging: &default-logging
     max-size: "${YUKIT_LOG_MAX_SIZE:-10m}"
     max-file: "${YUKIT_LOG_MAX_FILE:-5}"
 
+# Optional outbound proxy for environments that cannot reach GitHub directly.
+x-api-outbound-proxy: &api-outbound-proxy
+  HTTP_PROXY: "${YUKIT_OUTBOUND_PROXY_URL:-}"
+  HTTPS_PROXY: "${YUKIT_OUTBOUND_PROXY_URL:-}"
+  http_proxy: "${YUKIT_OUTBOUND_PROXY_URL:-}"
+  https_proxy: "${YUKIT_OUTBOUND_PROXY_URL:-}"
+  NO_PROXY: "${YUKIT_OUTBOUND_NO_PROXY-localhost,127.0.0.1,::1,redis,api,web,yukit-redis}"
+  no_proxy: "${YUKIT_OUTBOUND_NO_PROXY-localhost,127.0.0.1,::1,redis,api,web,yukit-redis}"
+
 services:
   web:
     image: "${YUKIT_IMAGE_REPOSITORY:?set YUKIT_IMAGE_REPOSITORY}:web-latest"
@@ -34,10 +43,13 @@ services:
       - path: .env
         required: true
     environment:
+      <<: *api-outbound-proxy
       YUKIT_ENVIRONMENT: ${YUKIT_ENVIRONMENT:-production}
       YUKIT_DEV_AUTH_ENABLED: ${YUKIT_DEV_AUTH_ENABLED:-false}
       YUKIT_DATABASE_URL: ${YUKIT_DATABASE_URL:?set YUKIT_DATABASE_URL}
       YUKIT_REDIS_URL: redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${YUKIT_API_HTTP_BIND:-127.0.0.1:18000}:8000"
     networks:
