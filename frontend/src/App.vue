@@ -27,8 +27,10 @@ import {
 import { preferredLoginMethod } from './authFlow'
 import {
   filterTools,
+  nextStylePreference,
   nextTheme,
   serializeExecutionResult,
+  type StylePreference,
   type ThemePreference,
   type ToolTag
 } from './interactions'
@@ -37,8 +39,10 @@ import { t, toggleLocale } from './i18n'
 type OutputTab = 'raw' | 'tree' | 'error'
 type RunState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'canceled'
 type ToolName = 'json-format' | 'base64' | 'timestamp' | 'regex-test' | 'text-hash'
-type CommandId = 'run' | 'copy' | 'theme' | 'help' | 'refresh-status'
+type CommandId = 'run' | 'copy' | 'theme' | 'style' | 'help' | 'refresh-status'
 type SystemStatus = 'unknown' | 'checking' | 'healthy' | 'unavailable'
+type SelectId = 'indent' | 'codec-mode' | 'charset' | 'timestamp-mode' | 'hash-algorithm' | 'regex-timeout'
+type CustomSelectOption = { value: string | number; label: string }
 
 const selectedTool = ref<ToolName>('json-format')
 const activeTag = ref<ToolTag>('all')
@@ -46,7 +50,9 @@ const commandOpen = ref(false)
 const commandQuery = ref('')
 const commandInput = ref<HTMLInputElement | null>(null)
 const helpOpen = ref(false)
+const openSelect = ref<SelectId | null>(null)
 const themePreference = ref<ThemePreference>(readStoredTheme())
+const stylePreference = ref<StylePreference>(readStoredStyle())
 const copyStatus = ref<'idle' | 'copied' | 'failed'>('idle')
 const systemStatus = ref<SystemStatus>('unknown')
 const systemBusy = ref(false)
@@ -103,6 +109,32 @@ const tagOptions: Array<{ value: ToolTag; labelKey: string }> = [
 ]
 
 const toolNames: ToolName[] = ['json-format', 'timestamp', 'base64', 'regex-test', 'text-hash']
+const indentChoices = computed<CustomSelectOption[]>(() => [
+  { value: 0, label: t('options.compact') },
+  { value: 2, label: t('options.spaces2') },
+  { value: 4, label: t('options.spaces4') },
+  { value: 8, label: t('options.spaces8') }
+])
+const base64ModeChoices = computed<CustomSelectOption[]>(() => [
+  { value: 'encode', label: t('options.encode') },
+  { value: 'decode', label: t('options.decode') }
+])
+const charsetChoices = computed<CustomSelectOption[]>(() => [{ value: 'utf-8', label: 'UTF-8' }])
+const timestampModeChoices = computed<CustomSelectOption[]>(() => [
+  { value: 'from-unix', label: t('options.fromUnix') },
+  { value: 'from-iso', label: t('options.fromIso') }
+])
+const hashAlgorithmChoices = computed<CustomSelectOption[]>(() => [
+  { value: 'sha256', label: 'SHA-256' },
+  { value: 'sha512', label: 'SHA-512' },
+  { value: 'md5', label: 'MD5' }
+])
+const regexTimeoutChoices = computed<CustomSelectOption[]>(() => [
+  { value: 25, label: '25ms' },
+  { value: 50, label: '50ms' },
+  { value: 100, label: '100ms' },
+  { value: 250, label: '250ms' }
+])
 
 const tools = computed(() => [
   {
@@ -231,6 +263,12 @@ const themeStatusLabel = computed(() =>
       ? t('theme.dark')
       : t('theme.system')
 )
+const styleButtonTitle = computed(() =>
+  stylePreference.value === 'island' ? t('style.switchToDefault') : t('style.switchToIsland')
+)
+const styleStatusLabel = computed(() =>
+  stylePreference.value === 'island' ? t('style.island') : t('style.default')
+)
 const systemStatusLabel = computed(() => {
   if (systemStatus.value === 'checking') return t('system.checking')
   if (systemStatus.value === 'healthy') return t('system.healthy')
@@ -269,6 +307,12 @@ const commandActions = computed<Array<{ id: CommandId; label: string; hint: stri
       id: 'theme' as const,
       label: t('command.toggleTheme'),
       hint: themeStatusLabel.value,
+      disabled: false
+    },
+    {
+      id: 'style' as const,
+      label: t('command.toggleStyle'),
+      hint: styleStatusLabel.value,
       disabled: false
     },
     {
@@ -312,16 +356,23 @@ const treeOutput = computed(() => {
 
 onMounted(() => {
   applyThemePreference(themePreference.value)
+  applyStylePreference(stylePreference.value)
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('click', handleWindowClick)
   void loadAccount()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('click', handleWindowClick)
 })
 
 watch(themePreference, (next) => {
   applyThemePreference(next)
+})
+
+watch(stylePreference, (next) => {
+  applyStylePreference(next)
 })
 
 function readStoredTheme(): ThemePreference {
@@ -332,6 +383,16 @@ function readStoredTheme(): ThemePreference {
     return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system'
   } catch {
     return 'system'
+  }
+}
+
+function readStoredStyle(): StylePreference {
+  if (typeof window === 'undefined') return 'default'
+
+  try {
+    return window.localStorage.getItem('yukit.style') === 'island' ? 'island' : 'default'
+  } catch {
+    return 'default'
   }
 }
 
@@ -354,8 +415,43 @@ function applyThemePreference(preference: ThemePreference) {
   }
 }
 
+function applyStylePreference(preference: StylePreference) {
+  if (typeof document === 'undefined') return
+
+  document.documentElement.dataset.style = preference
+
+  try {
+    window.localStorage.setItem('yukit.style', preference)
+  } catch {
+    // Style switching should keep working when storage is blocked.
+  }
+}
+
 function cycleTheme() {
   themePreference.value = nextTheme(themePreference.value)
+}
+
+function cycleStyle() {
+  stylePreference.value = nextStylePreference(stylePreference.value)
+}
+
+function selectLabel(value: string | number, choices: CustomSelectOption[]) {
+  return choices.find((choice) => choice.value === value)?.label ?? String(value)
+}
+
+function toggleCustomSelect(selectId: SelectId) {
+  openSelect.value = openSelect.value === selectId ? null : selectId
+}
+
+function closeCustomSelect() {
+  openSelect.value = null
+}
+
+function handleWindowClick(event: MouseEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  if (!target?.closest('.custom-select')) {
+    closeCustomSelect()
+  }
 }
 
 function isToolName(value: string): value is ToolName {
@@ -372,12 +468,19 @@ function closeOverlays() {
   commandOpen.value = false
   helpOpen.value = false
   authDialogOpen.value = false
+  closeCustomSelect()
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     openCommandMenu()
+    return
+  }
+
+  if (event.key === 'Escape' && openSelect.value) {
+    event.preventDefault()
+    closeCustomSelect()
     return
   }
 
@@ -409,6 +512,8 @@ async function executeCommand(commandId: CommandId) {
     await copyOutput()
   } else if (commandId === 'theme') {
     cycleTheme()
+  } else if (commandId === 'style') {
+    cycleStyle()
   } else if (commandId === 'help') {
     commandOpen.value = false
     helpOpen.value = true
@@ -605,6 +710,7 @@ async function pollExecution(executionId: string) {
 function selectTool(toolName: ToolName, enabled: boolean) {
   if (!enabled || selectedTool.value === toolName) return
   selectedTool.value = toolName
+  closeCustomSelect()
   clearInput()
   useSampleInput()
 }
@@ -735,6 +841,17 @@ function restoreExecution(item: ExecutionSummary) {
         <kbd>Ctrl K</kbd>
       </button>
       <div class="top-actions">
+        <button
+          class="style-toggle"
+          :class="{ active: stylePreference === 'island' }"
+          type="button"
+          :title="styleButtonTitle"
+          :aria-label="styleButtonTitle"
+          @click="cycleStyle"
+        >
+          <span class="style-toggle-icon" aria-hidden="true"></span>
+          <span>{{ styleStatusLabel }}</span>
+        </button>
         <button
           class="language-toggle"
           type="button"
@@ -1102,12 +1219,34 @@ function restoreExecution(item: ExecutionSummary) {
             <template v-if="selectedTool === 'json-format'">
             <label class="field">
               <span>{{ t('options.indentSize') }}</span>
-              <select v-model.number="options.indent">
-                <option :value="0">{{ t('options.compact') }}</option>
-                <option :value="2">{{ t('options.spaces2') }}</option>
-                <option :value="4">{{ t('options.spaces4') }}</option>
-                <option :value="8">{{ t('options.spaces8') }}</option>
-              </select>
+              <div class="custom-select" @click.stop>
+                <button
+                  class="custom-select-trigger"
+                  :class="{ open: openSelect === 'indent' }"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="openSelect === 'indent'"
+                  :aria-label="`${t('options.indentSize')} ${selectLabel(options.indent, indentChoices)}`"
+                  @click="toggleCustomSelect('indent')"
+                >
+                  <span>{{ selectLabel(options.indent, indentChoices) }}</span>
+                  <span class="custom-select-arrow" aria-hidden="true"></span>
+                </button>
+                <div v-if="openSelect === 'indent'" class="custom-select-menu" role="listbox">
+                  <button
+                    v-for="choice in indentChoices"
+                    :key="choice.value"
+                    class="custom-select-option"
+                    :class="{ active: options.indent === choice.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="options.indent === choice.value"
+                    @click="options.indent = Number(choice.value); closeCustomSelect()"
+                  >
+                    {{ choice.label }}
+                  </button>
+                </div>
+              </div>
             </label>
 
             <label class="switch-row">
@@ -1130,38 +1269,134 @@ function restoreExecution(item: ExecutionSummary) {
             <template v-else-if="selectedTool === 'base64'">
             <label class="field">
               <span>{{ t('options.codecMode') }}</span>
-              <select v-model="base64Options.mode">
-                <option value="encode">{{ t('options.encode') }}</option>
-                <option value="decode">{{ t('options.decode') }}</option>
-              </select>
+              <div class="custom-select" @click.stop>
+                <button
+                  class="custom-select-trigger"
+                  :class="{ open: openSelect === 'codec-mode' }"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="openSelect === 'codec-mode'"
+                  :aria-label="`${t('options.codecMode')} ${selectLabel(base64Options.mode, base64ModeChoices)}`"
+                  @click="toggleCustomSelect('codec-mode')"
+                >
+                  <span>{{ selectLabel(base64Options.mode, base64ModeChoices) }}</span>
+                  <span class="custom-select-arrow" aria-hidden="true"></span>
+                </button>
+                <div v-if="openSelect === 'codec-mode'" class="custom-select-menu" role="listbox">
+                  <button
+                    v-for="choice in base64ModeChoices"
+                    :key="choice.value"
+                    class="custom-select-option"
+                    :class="{ active: base64Options.mode === choice.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="base64Options.mode === choice.value"
+                    @click="base64Options.mode = choice.value as Base64RunOptions['mode']; closeCustomSelect()"
+                  >
+                    {{ choice.label }}
+                  </button>
+                </div>
+              </div>
             </label>
 
             <label class="field">
               <span>{{ t('options.charset') }}</span>
-              <select v-model="base64Options.charset">
-                <option value="utf-8">UTF-8</option>
-              </select>
+              <div class="custom-select" @click.stop>
+                <button
+                  class="custom-select-trigger"
+                  :class="{ open: openSelect === 'charset' }"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="openSelect === 'charset'"
+                  :aria-label="`${t('options.charset')} ${selectLabel(base64Options.charset, charsetChoices)}`"
+                  @click="toggleCustomSelect('charset')"
+                >
+                  <span>{{ selectLabel(base64Options.charset, charsetChoices) }}</span>
+                  <span class="custom-select-arrow" aria-hidden="true"></span>
+                </button>
+                <div v-if="openSelect === 'charset'" class="custom-select-menu" role="listbox">
+                  <button
+                    v-for="choice in charsetChoices"
+                    :key="choice.value"
+                    class="custom-select-option"
+                    :class="{ active: base64Options.charset === choice.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="base64Options.charset === choice.value"
+                    @click="base64Options.charset = choice.value as Base64RunOptions['charset']; closeCustomSelect()"
+                  >
+                    {{ choice.label }}
+                  </button>
+                </div>
+              </div>
             </label>
             </template>
 
             <template v-else-if="selectedTool === 'timestamp'">
             <label class="field">
               <span>{{ t('options.timestampMode') }}</span>
-              <select v-model="timestampOptions.mode" @change="useSampleInput">
-                <option value="from-unix">{{ t('options.fromUnix') }}</option>
-                <option value="from-iso">{{ t('options.fromIso') }}</option>
-              </select>
+              <div class="custom-select" @click.stop>
+                <button
+                  class="custom-select-trigger"
+                  :class="{ open: openSelect === 'timestamp-mode' }"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="openSelect === 'timestamp-mode'"
+                  :aria-label="`${t('options.timestampMode')} ${selectLabel(timestampOptions.mode, timestampModeChoices)}`"
+                  @click="toggleCustomSelect('timestamp-mode')"
+                >
+                  <span>{{ selectLabel(timestampOptions.mode, timestampModeChoices) }}</span>
+                  <span class="custom-select-arrow" aria-hidden="true"></span>
+                </button>
+                <div v-if="openSelect === 'timestamp-mode'" class="custom-select-menu" role="listbox">
+                  <button
+                    v-for="choice in timestampModeChoices"
+                    :key="choice.value"
+                    class="custom-select-option"
+                    :class="{ active: timestampOptions.mode === choice.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="timestampOptions.mode === choice.value"
+                    @click="timestampOptions.mode = choice.value as TimestampRunOptions['mode']; useSampleInput(); closeCustomSelect()"
+                  >
+                    {{ choice.label }}
+                  </button>
+                </div>
+              </div>
             </label>
             </template>
 
             <template v-else-if="selectedTool === 'text-hash'">
             <label class="field">
               <span>{{ t('options.hashAlgorithm') }}</span>
-              <select v-model="textHashOptions.algorithm">
-                <option value="sha256">SHA-256</option>
-                <option value="sha512">SHA-512</option>
-                <option value="md5">MD5</option>
-              </select>
+              <div class="custom-select" @click.stop>
+                <button
+                  class="custom-select-trigger"
+                  :class="{ open: openSelect === 'hash-algorithm' }"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="openSelect === 'hash-algorithm'"
+                  :aria-label="`${t('options.hashAlgorithm')} ${selectLabel(textHashOptions.algorithm, hashAlgorithmChoices)}`"
+                  @click="toggleCustomSelect('hash-algorithm')"
+                >
+                  <span>{{ selectLabel(textHashOptions.algorithm, hashAlgorithmChoices) }}</span>
+                  <span class="custom-select-arrow" aria-hidden="true"></span>
+                </button>
+                <div v-if="openSelect === 'hash-algorithm'" class="custom-select-menu" role="listbox">
+                  <button
+                    v-for="choice in hashAlgorithmChoices"
+                    :key="choice.value"
+                    class="custom-select-option"
+                    :class="{ active: textHashOptions.algorithm === choice.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="textHashOptions.algorithm === choice.value"
+                    @click="textHashOptions.algorithm = choice.value as TextHashRunOptions['algorithm']; closeCustomSelect()"
+                  >
+                    {{ choice.label }}
+                  </button>
+                </div>
+              </div>
             </label>
             </template>
 
@@ -1202,12 +1437,34 @@ function restoreExecution(item: ExecutionSummary) {
 
             <label class="field">
               <span>{{ t('options.timeoutMs') }}</span>
-              <select v-model.number="regexOptions.timeoutMs">
-                <option :value="25">25ms</option>
-                <option :value="50">50ms</option>
-                <option :value="100">100ms</option>
-                <option :value="250">250ms</option>
-              </select>
+              <div class="custom-select" @click.stop>
+                <button
+                  class="custom-select-trigger"
+                  :class="{ open: openSelect === 'regex-timeout' }"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="openSelect === 'regex-timeout'"
+                  :aria-label="`${t('options.timeoutMs')} ${selectLabel(regexOptions.timeoutMs, regexTimeoutChoices)}`"
+                  @click="toggleCustomSelect('regex-timeout')"
+                >
+                  <span>{{ selectLabel(regexOptions.timeoutMs, regexTimeoutChoices) }}</span>
+                  <span class="custom-select-arrow" aria-hidden="true"></span>
+                </button>
+                <div v-if="openSelect === 'regex-timeout'" class="custom-select-menu" role="listbox">
+                  <button
+                    v-for="choice in regexTimeoutChoices"
+                    :key="choice.value"
+                    class="custom-select-option"
+                    :class="{ active: regexOptions.timeoutMs === choice.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="regexOptions.timeoutMs === choice.value"
+                    @click="regexOptions.timeoutMs = Number(choice.value); closeCustomSelect()"
+                  >
+                    {{ choice.label }}
+                  </button>
+                </div>
+              </div>
             </label>
             </template>
 

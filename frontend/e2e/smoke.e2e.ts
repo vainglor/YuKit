@@ -1,14 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('renders the toolbox workspace', async ({ page }) => {
-  await page.goto('/')
-
-  await expect(page.getByRole('heading', { name: /JSON Format|JSON 格式化/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Run|运行/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Text Hash|文本哈希/ })).toBeVisible()
-})
-
-test('wires visible workspace controls', async ({ page }) => {
+test.beforeEach(async ({ page }) => {
   await page.route('**/api/auth/me', async (route) => {
     await route.fulfill({
       status: 200,
@@ -23,7 +15,17 @@ test('wires visible workspace controls', async ({ page }) => {
       body: JSON.stringify({ dev_login: true, github: false, email: false })
     })
   })
+})
 
+test('renders the toolbox workspace', async ({ page }) => {
+  await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: /JSON Format|JSON 格式化/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Run|运行/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Text Hash|文本哈希/ })).toBeVisible()
+})
+
+test('wires visible workspace controls', async ({ page }) => {
   await page.goto('/')
 
   await page.getByRole('button', { name: /Search tools|搜索工具/ }).click()
@@ -35,6 +37,16 @@ test('wires visible workspace controls', async ({ page }) => {
   await expect
     .poll(() => page.evaluate(() => document.documentElement.dataset.themePreference))
     .toBe('light')
+
+  await page.getByRole('button', { name: /Switch to Animal Crossing style|切换到动森风格/ }).click()
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.style)).toBe('island')
+  await page.getByRole('button', { name: /Regex Test|正则测试/ }).click()
+  await page.getByRole('button', { name: /Timeout 50ms|超时 50ms/ }).click()
+  await expect(page.getByRole('listbox')).toBeVisible()
+  await page.getByRole('option', { name: '100ms' }).click()
+  await expect(page.getByRole('button', { name: /Timeout 100ms|超时 100ms/ })).toBeVisible()
+  await page.getByRole('button', { name: /Switch to current style|切换到当前风格/ }).click()
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.style)).toBe('default')
 
   await page.getByRole('button', { name: /Codec|编解码/ }).click()
   const toolList = page.locator('.tool-list')

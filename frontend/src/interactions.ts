@@ -1,4 +1,5 @@
 export type ThemePreference = 'light' | 'dark' | 'system'
+export type StylePreference = 'default' | 'island'
 export type ToolTag = 'all' | 'format' | 'codec' | 'time' | 'text'
 
 export type ToolCatalogItem = {
@@ -30,6 +31,10 @@ export function nextTheme(current: ThemePreference): ThemePreference {
   if (current === 'light') return 'dark'
   if (current === 'dark') return 'system'
   return 'light'
+}
+
+export function nextStylePreference(current: StylePreference): StylePreference {
+  return current === 'island' ? 'default' : 'island'
 }
 
 export function serializeExecutionResult(result: unknown): string {

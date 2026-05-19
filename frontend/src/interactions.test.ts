@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { filterTools, nextTheme, serializeExecutionResult, type ToolCatalogItem } from './interactions'
+import {
+  filterTools,
+  nextStylePreference,
+  nextTheme,
+  serializeExecutionResult,
+  type ToolCatalogItem
+} from './interactions'
 
 const tools: ToolCatalogItem[] = [
   {
@@ -47,6 +53,13 @@ describe('nextTheme', () => {
     expect(nextTheme('light')).toBe('dark')
     expect(nextTheme('dark')).toBe('system')
     expect(nextTheme('system')).toBe('light')
+  })
+})
+
+describe('nextStylePreference', () => {
+  it('toggles between default and island styles', () => {
+    expect(nextStylePreference('default')).toBe('island')
+    expect(nextStylePreference('island')).toBe('default')
   })
 })
 
