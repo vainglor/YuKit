@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
+import {
+  AnimalButton,
+  AnimalDialog,
+  AnimalPanel,
+  AnimalSelect,
+  AnimalSwitch,
+  AnimalTextarea,
+  type AnimalSelectOption
+} from './components/animal'
 import { runBase64Codec, type Base64RunOptions } from './api/base64'
 import { runRegexTest, type RegexFlag, type RegexRunOptions } from './api/regex'
 import { runTextHash, type TextHashRunOptions } from './api/textHash'
@@ -41,8 +50,6 @@ type RunState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_
 type ToolName = 'json-format' | 'base64' | 'timestamp' | 'regex-test' | 'text-hash'
 type CommandId = 'run' | 'copy' | 'theme' | 'style' | 'help' | 'refresh-status'
 type SystemStatus = 'unknown' | 'checking' | 'healthy' | 'unavailable'
-type SelectId = 'indent' | 'codec-mode' | 'charset' | 'timestamp-mode' | 'hash-algorithm' | 'regex-timeout'
-type CustomSelectOption = { value: string | number; label: string }
 
 const selectedTool = ref<ToolName>('json-format')
 const activeTag = ref<ToolTag>('all')
@@ -50,7 +57,6 @@ const commandOpen = ref(false)
 const commandQuery = ref('')
 const commandInput = ref<HTMLInputElement | null>(null)
 const helpOpen = ref(false)
-const openSelect = ref<SelectId | null>(null)
 const themePreference = ref<ThemePreference>(readStoredTheme())
 const stylePreference = ref<StylePreference>(readStoredStyle())
 const copyStatus = ref<'idle' | 'copied' | 'failed'>('idle')
@@ -109,27 +115,27 @@ const tagOptions: Array<{ value: ToolTag; labelKey: string }> = [
 ]
 
 const toolNames: ToolName[] = ['json-format', 'timestamp', 'base64', 'regex-test', 'text-hash']
-const indentChoices = computed<CustomSelectOption[]>(() => [
+const indentChoices = computed<AnimalSelectOption[]>(() => [
   { value: 0, label: t('options.compact') },
   { value: 2, label: t('options.spaces2') },
   { value: 4, label: t('options.spaces4') },
   { value: 8, label: t('options.spaces8') }
 ])
-const base64ModeChoices = computed<CustomSelectOption[]>(() => [
+const base64ModeChoices = computed<AnimalSelectOption[]>(() => [
   { value: 'encode', label: t('options.encode') },
   { value: 'decode', label: t('options.decode') }
 ])
-const charsetChoices = computed<CustomSelectOption[]>(() => [{ value: 'utf-8', label: 'UTF-8' }])
-const timestampModeChoices = computed<CustomSelectOption[]>(() => [
+const charsetChoices = computed<AnimalSelectOption[]>(() => [{ value: 'utf-8', label: 'UTF-8' }])
+const timestampModeChoices = computed<AnimalSelectOption[]>(() => [
   { value: 'from-unix', label: t('options.fromUnix') },
   { value: 'from-iso', label: t('options.fromIso') }
 ])
-const hashAlgorithmChoices = computed<CustomSelectOption[]>(() => [
+const hashAlgorithmChoices = computed<AnimalSelectOption[]>(() => [
   { value: 'sha256', label: 'SHA-256' },
   { value: 'sha512', label: 'SHA-512' },
   { value: 'md5', label: 'MD5' }
 ])
-const regexTimeoutChoices = computed<CustomSelectOption[]>(() => [
+const regexTimeoutChoices = computed<AnimalSelectOption[]>(() => [
   { value: 25, label: '25ms' },
   { value: 50, label: '50ms' },
   { value: 100, label: '100ms' },
@@ -358,13 +364,11 @@ onMounted(() => {
   applyThemePreference(themePreference.value)
   applyStylePreference(stylePreference.value)
   window.addEventListener('keydown', handleGlobalKeydown)
-  window.addEventListener('click', handleWindowClick)
   void loadAccount()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
-  window.removeEventListener('click', handleWindowClick)
 })
 
 watch(themePreference, (next) => {
@@ -435,25 +439,6 @@ function cycleStyle() {
   stylePreference.value = nextStylePreference(stylePreference.value)
 }
 
-function selectLabel(value: string | number, choices: CustomSelectOption[]) {
-  return choices.find((choice) => choice.value === value)?.label ?? String(value)
-}
-
-function toggleCustomSelect(selectId: SelectId) {
-  openSelect.value = openSelect.value === selectId ? null : selectId
-}
-
-function closeCustomSelect() {
-  openSelect.value = null
-}
-
-function handleWindowClick(event: MouseEvent) {
-  const target = event.target instanceof Element ? event.target : null
-  if (!target?.closest('.custom-select')) {
-    closeCustomSelect()
-  }
-}
-
 function isToolName(value: string): value is ToolName {
   return toolNames.includes(value as ToolName)
 }
@@ -468,19 +453,12 @@ function closeOverlays() {
   commandOpen.value = false
   helpOpen.value = false
   authDialogOpen.value = false
-  closeCustomSelect()
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     openCommandMenu()
-    return
-  }
-
-  if (event.key === 'Escape' && openSelect.value) {
-    event.preventDefault()
-    closeCustomSelect()
     return
   }
 
@@ -710,7 +688,6 @@ async function pollExecution(executionId: string) {
 function selectTool(toolName: ToolName, enabled: boolean) {
   if (!enabled || selectedTool.value === toolName) return
   selectedTool.value = toolName
-  closeCustomSelect()
   clearInput()
   useSampleInput()
 }
@@ -830,7 +807,7 @@ function restoreExecution(item: ExecutionSummary) {
         <span class="brand-mark">Y</span>
         <span>YuKit</span>
       </div>
-      <button
+      <AnimalButton
         class="command-search"
         type="button"
         aria-haspopup="dialog"
@@ -839,71 +816,68 @@ function restoreExecution(item: ExecutionSummary) {
       >
         <span>{{ t('toolbar.search') }}</span>
         <kbd>Ctrl K</kbd>
-      </button>
+      </AnimalButton>
       <div class="top-actions">
-        <button
+        <AnimalButton
           class="style-toggle"
           :class="{ active: stylePreference === 'island' }"
-          type="button"
           :title="styleButtonTitle"
           :aria-label="styleButtonTitle"
           @click="cycleStyle"
         >
           <span class="style-toggle-icon" aria-hidden="true"></span>
           <span>{{ styleStatusLabel }}</span>
-        </button>
-        <button
+        </AnimalButton>
+        <AnimalButton
           class="language-toggle"
-          type="button"
           :title="t('toolbar.languageButtonTitle')"
           :aria-label="t('toolbar.languageButtonTitle')"
           @click="toggleLocale"
         >
           {{ t('toolbar.languageSwitch') }}
-        </button>
-        <button
+        </AnimalButton>
+        <AnimalButton
           class="icon-button"
-          type="button"
+          variant="icon"
           :title="t('toolbar.help')"
           :aria-label="t('toolbar.help')"
           @click="helpOpen = true"
         >
           ?
-        </button>
-        <button
+        </AnimalButton>
+        <AnimalButton
           class="icon-button"
-          type="button"
+          variant="icon"
           :title="themeButtonTitle"
           :aria-label="themeButtonTitle"
           @click="cycleTheme"
         >
           ◐
-        </button>
-        <button
+        </AnimalButton>
+        <AnimalButton
           v-if="!isSignedIn"
           class="primary-button"
-          type="button"
+          variant="primary"
           :disabled="authBusy"
           @click="signIn"
         >
           {{ t('auth.signIn') }}
-        </button>
-        <button v-else class="user-pill" type="button" :disabled="authBusy" @click="signOut">
+        </AnimalButton>
+        <AnimalButton v-else class="user-pill" :disabled="authBusy" @click="signOut">
           {{ displayName }}
-        </button>
+        </AnimalButton>
       </div>
     </header>
 
-    <div v-if="commandOpen" class="overlay-backdrop" @click.self="closeOverlays">
-      <section class="command-dialog" role="dialog" aria-modal="true" :aria-label="t('command.title')">
+    <AnimalDialog v-if="commandOpen" panel-class="command-dialog" :label="t('command.title')" @close="closeOverlays">
         <header class="dialog-head">
           <div>
             <strong>{{ t('command.title') }}</strong>
             <span>{{ t('command.subtitle') }}</span>
           </div>
-          <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeOverlays">
+          <AnimalButton class="icon-button" variant="icon" :aria-label="t('actions.close')" @click="closeOverlays">
             ×
-          </button>
+          </AnimalButton>
         </header>
 
         <input
@@ -917,7 +891,7 @@ function restoreExecution(item: ExecutionSummary) {
 
         <div class="command-section">
           <span class="section-label">{{ t('command.tools') }}</span>
-          <button
+          <AnimalButton
             v-for="tool in commandToolResults"
             :key="tool.name"
             class="command-row"
@@ -929,7 +903,7 @@ function restoreExecution(item: ExecutionSummary) {
               <strong>{{ tool.title }}</strong>
               <small>{{ tool.meta }}</small>
             </span>
-          </button>
+          </AnimalButton>
           <p v-if="commandToolResults.length === 0" class="empty-copy">
             {{ t('command.noTools') }}
           </p>
@@ -937,7 +911,7 @@ function restoreExecution(item: ExecutionSummary) {
 
         <div class="command-section">
           <span class="section-label">{{ t('command.actions') }}</span>
-          <button
+          <AnimalButton
             v-for="action in commandActions"
             :key="action.id"
             class="command-row"
@@ -950,21 +924,19 @@ function restoreExecution(item: ExecutionSummary) {
               <strong>{{ action.label }}</strong>
               <small>{{ action.hint }}</small>
             </span>
-          </button>
+          </AnimalButton>
         </div>
-      </section>
-    </div>
+    </AnimalDialog>
 
-    <div v-if="helpOpen" class="overlay-backdrop" @click.self="closeOverlays">
-      <section class="help-dialog" role="dialog" aria-modal="true" :aria-label="t('help.title')">
+    <AnimalDialog v-if="helpOpen" panel-class="help-dialog" :label="t('help.title')" @close="closeOverlays">
         <header class="dialog-head">
           <div>
             <strong>{{ t('help.title') }}</strong>
             <span>{{ currentToolTitle }}</span>
           </div>
-          <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeOverlays">
+          <AnimalButton class="icon-button" variant="icon" :aria-label="t('actions.close')" @click="closeOverlays">
             ×
-          </button>
+          </AnimalButton>
         </header>
         <div class="help-body">
           <p>{{ currentToolDescription }}</p>
@@ -980,59 +952,55 @@ function restoreExecution(item: ExecutionSummary) {
           </div>
           <p class="empty-copy">{{ t('help.keyboard') }}</p>
         </div>
-      </section>
-    </div>
+    </AnimalDialog>
 
-    <div v-if="authDialogOpen" class="overlay-backdrop" @click.self="closeOverlays">
-      <section class="auth-dialog" role="dialog" aria-modal="true" :aria-label="t('auth.dialogTitle')">
+    <AnimalDialog v-if="authDialogOpen" panel-class="auth-dialog" :label="t('auth.dialogTitle')" @close="closeOverlays">
         <header class="dialog-head">
           <div>
             <strong>{{ t('auth.dialogTitle') }}</strong>
             <span>{{ isSignedIn ? displayName : t('auth.dialogSubtitle') }}</span>
           </div>
-          <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeOverlays">
+          <AnimalButton class="icon-button" variant="icon" :aria-label="t('actions.close')" @click="closeOverlays">
             ×
-          </button>
+          </AnimalButton>
         </header>
 
         <div class="auth-body">
           <div v-if="isSignedIn" class="auth-state">
             <strong>{{ t('auth.signedInAs') }}</strong>
             <span>{{ displayName }}</span>
-            <button class="secondary-button" type="button" :disabled="authBusy" @click="signOut">
+            <AnimalButton class="secondary-button" :disabled="authBusy" @click="signOut">
               {{ t('auth.signOut') }}
-            </button>
+            </AnimalButton>
           </div>
 
           <template v-else>
-            <button
+            <AnimalButton
               v-if="authOptions.dev_login"
               class="auth-provider primary-button"
-              type="button"
+              variant="primary"
               :disabled="authBusy"
               @click="signInWithDev"
             >
               {{ authBusy && preferredAuthMethod === 'dev' ? t('auth.signingIn') : t('auth.localDevLogin') }}
-            </button>
+            </AnimalButton>
 
-            <button
+            <AnimalButton
               v-if="authOptions.github"
               class="auth-provider secondary-button"
-              type="button"
               :disabled="authBusy"
               @click="signInWithGitHub"
             >
               {{ t('auth.githubLogin') }}
-            </button>
+            </AnimalButton>
 
-            <button
+            <AnimalButton
               v-if="!authOptions.github"
               class="auth-provider secondary-button"
-              type="button"
               disabled
             >
               {{ t('auth.githubUnavailable') }}
-            </button>
+            </AnimalButton>
 
             <p v-if="preferredAuthMethod === 'none'" class="auth-warning">
               {{ t('auth.noProvider') }}
@@ -1043,14 +1011,13 @@ function restoreExecution(item: ExecutionSummary) {
 
           <p v-if="authError" class="auth-error">{{ authError }}</p>
         </div>
-      </section>
-    </div>
+    </AnimalDialog>
 
     <aside class="sidebar">
       <section>
         <div class="section-label">{{ t('sections.discover') }}</div>
         <div class="chips">
-          <button
+          <AnimalButton
             v-for="tag in tagOptions"
             :key="tag.value"
             class="chip"
@@ -1059,20 +1026,20 @@ function restoreExecution(item: ExecutionSummary) {
             @click="activeTag = tag.value"
           >
             {{ t(tag.labelKey) }}
-          </button>
+          </AnimalButton>
         </div>
       </section>
 
       <section>
         <div class="section-label">{{ t('sections.favorites') }}</div>
-        <button v-if="!isSignedIn" class="sidebar-hint" type="button" @click="signIn">
+        <AnimalButton v-if="!isSignedIn" class="sidebar-hint" type="button" @click="signIn">
           {{ t('favorites.signInHint') }}
-        </button>
+        </AnimalButton>
         <p v-else-if="favoriteToolItems.length === 0" class="empty-copy">
           {{ t('favorites.empty') }}
         </p>
         <div v-else class="favorite-list">
-          <button
+          <AnimalButton
             v-for="tool in favoriteToolItems"
             :key="tool.name"
             class="favorite-item"
@@ -1081,12 +1048,12 @@ function restoreExecution(item: ExecutionSummary) {
           >
             <span class="tool-glyph">{{ tool.glyph }}</span>
             <span>{{ tool.title }}</span>
-          </button>
+          </AnimalButton>
         </div>
       </section>
 
       <nav class="tool-list" :aria-label="t('aria.tools')">
-        <button
+        <AnimalButton
           v-for="tool in visibleTools"
           :key="tool.title"
           class="tool-item"
@@ -1101,13 +1068,13 @@ function restoreExecution(item: ExecutionSummary) {
             <span class="tool-meta">{{ tool.meta }}</span>
           </span>
           <span class="favorite">{{ tool.favorite ? '★' : '☆' }}</span>
-        </button>
+        </AnimalButton>
         <p v-if="visibleTools.length === 0" class="empty-copy">
           {{ t('tools.noMatches') }}
         </p>
       </nav>
 
-      <button
+      <AnimalButton
         class="system-badge"
         :class="systemTone"
         type="button"
@@ -1115,7 +1082,7 @@ function restoreExecution(item: ExecutionSummary) {
         @click="refreshSystemStatus"
       >
         {{ systemStatusLabel }}
-      </button>
+      </AnimalButton>
     </aside>
 
     <main class="workspace">
@@ -1126,23 +1093,23 @@ function restoreExecution(item: ExecutionSummary) {
           <p>{{ currentToolDescription }}</p>
         </div>
         <div class="heading-actions">
-          <button
+          <AnimalButton
             class="icon-button"
-            type="button"
+            variant="icon"
             :title="t('actions.favorite')"
             :aria-label="t('actions.favorite')"
             @click="toggleFavorite"
           >
             {{ favoriteCurrentTool ? '★' : '☆' }}
-          </button>
-          <button
+          </AnimalButton>
+          <AnimalButton
             class="primary-button run-button"
-            type="button"
+            variant="primary"
             :disabled="runState === 'running' || runState === 'queued'"
             @click="runTool"
           >
             {{ runState === 'running' || runState === 'queued' ? t('actions.running') : t('actions.run') }}
-          </button>
+          </AnimalButton>
         </div>
       </section>
 
@@ -1160,250 +1127,129 @@ function restoreExecution(item: ExecutionSummary) {
           {{ stateLabel }}
         </span>
         <span class="badge">{{ t('badges.inputNotStored') }}</span>
-        <button class="badge action" type="button" :disabled="!hasOutput" @click="copyOutput">
+        <AnimalButton class="badge action" :disabled="!hasOutput" @click="copyOutput">
           {{ t('actions.copyResult') }}
-        </button>
+        </AnimalButton>
         <span v-if="copyStatusLabel" class="feedback-text">{{ copyStatusLabel }}</span>
       </section>
 
       <section class="tool-workspace">
         <div class="io-stack">
-          <section class="panel">
-            <header class="panel-head">
-              <span>{{ t('panels.input') }}</span>
+          <AnimalPanel :title="t('panels.input')">
+            <template #tools>
               <span class="panel-tools">
-                <button type="button" @click="useSampleInput">{{ t('actions.sample') }}</button>
-                <button type="button" @click="clearInput">{{ t('actions.clear') }}</button>
+                <AnimalButton type="button" @click="useSampleInput">{{ t('actions.sample') }}</AnimalButton>
+                <AnimalButton type="button" @click="clearInput">{{ t('actions.clear') }}</AnimalButton>
                 <span>{{ inputBytes }} B</span>
               </span>
-            </header>
-            <textarea
+            </template>
+            <AnimalTextarea
               v-model="input"
               class="code-input"
               spellcheck="false"
               :aria-label="t('aria.toolInput')"
             />
-          </section>
+          </AnimalPanel>
 
-          <section class="panel">
-            <header class="panel-head">
-              <span>{{ t('panels.output') }}</span>
+          <AnimalPanel :title="t('panels.output')">
+            <template #tools>
               <span class="panel-tabs">
-                <button type="button" :class="{ active: activeTab === 'raw' }" @click="activeTab = 'raw'">
+                <AnimalButton type="button" :class="{ active: activeTab === 'raw' }" @click="activeTab = 'raw'">
                   {{ t('tabs.raw') }}
-                </button>
-                <button type="button" :class="{ active: activeTab === 'tree' }" @click="activeTab = 'tree'">
+                </AnimalButton>
+                <AnimalButton type="button" :class="{ active: activeTab === 'tree' }" @click="activeTab = 'tree'">
                   {{ t('tabs.tree') }}
-                </button>
-                <button type="button" :class="{ active: activeTab === 'error' }" @click="activeTab = 'error'">
+                </AnimalButton>
+                <AnimalButton type="button" :class="{ active: activeTab === 'error' }" @click="activeTab = 'error'">
                   {{ t('tabs.error') }}
-                </button>
+                </AnimalButton>
                 <span>{{ outputBytes }} B</span>
               </span>
-            </header>
+            </template>
             <pre v-if="activeTab === 'raw'" class="code-output">{{ output || outputPlaceholder }}</pre>
             <pre v-else-if="activeTab === 'tree'" class="code-output">{{ treeOutput || t('placeholders.treeOutput') }}</pre>
             <div v-else class="error-output">
               <strong>{{ errorMessage || t('errors.noLatestError') }}</strong>
               <span>{{ t('errors.sanitized') }}</span>
             </div>
-          </section>
+          </AnimalPanel>
         </div>
 
-        <aside class="panel options-panel">
-          <header class="panel-head">
-            <span>{{ t('panels.options') }}</span>
-            <button type="button" @click="resetOptions">{{ t('actions.reset') }}</button>
-          </header>
+        <AnimalPanel class="options-panel" as="aside" :title="t('panels.options')">
+          <template #tools>
+            <AnimalButton type="button" @click="resetOptions">{{ t('actions.reset') }}</AnimalButton>
+          </template>
           <div class="options-body">
             <template v-if="selectedTool === 'json-format'">
             <label class="field">
               <span>{{ t('options.indentSize') }}</span>
-              <div class="custom-select" @click.stop>
-                <button
-                  class="custom-select-trigger"
-                  :class="{ open: openSelect === 'indent' }"
-                  type="button"
-                  aria-haspopup="listbox"
-                  :aria-expanded="openSelect === 'indent'"
-                  :aria-label="`${t('options.indentSize')} ${selectLabel(options.indent, indentChoices)}`"
-                  @click="toggleCustomSelect('indent')"
-                >
-                  <span>{{ selectLabel(options.indent, indentChoices) }}</span>
-                  <span class="custom-select-arrow" aria-hidden="true"></span>
-                </button>
-                <div v-if="openSelect === 'indent'" class="custom-select-menu" role="listbox">
-                  <button
-                    v-for="choice in indentChoices"
-                    :key="choice.value"
-                    class="custom-select-option"
-                    :class="{ active: options.indent === choice.value }"
-                    type="button"
-                    role="option"
-                    :aria-selected="options.indent === choice.value"
-                    @click="options.indent = Number(choice.value); closeCustomSelect()"
-                  >
-                    {{ choice.label }}
-                  </button>
-                </div>
-              </div>
+              <AnimalSelect
+                v-model="options.indent"
+                :label="t('options.indentSize')"
+                :options="indentChoices"
+              />
             </label>
 
-            <label class="switch-row">
-              <span>
-                <strong>{{ t('options.sortKeys') }}</strong>
-                <small>{{ t('options.sortKeysHelp') }}</small>
-              </span>
-              <input v-model="options.sortKeys" type="checkbox" />
-            </label>
+            <AnimalSwitch
+              v-model="options.sortKeys"
+              :label="t('options.sortKeys')"
+              :hint="t('options.sortKeysHelp')"
+            />
 
-            <label class="switch-row">
-              <span>
-                <strong>{{ t('options.ensureAscii') }}</strong>
-                <small>{{ t('options.ensureAsciiHelp') }}</small>
-              </span>
-              <input v-model="options.ensureAscii" type="checkbox" />
-            </label>
+            <AnimalSwitch
+              v-model="options.ensureAscii"
+              :label="t('options.ensureAscii')"
+              :hint="t('options.ensureAsciiHelp')"
+            />
             </template>
 
             <template v-else-if="selectedTool === 'base64'">
             <label class="field">
               <span>{{ t('options.codecMode') }}</span>
-              <div class="custom-select" @click.stop>
-                <button
-                  class="custom-select-trigger"
-                  :class="{ open: openSelect === 'codec-mode' }"
-                  type="button"
-                  aria-haspopup="listbox"
-                  :aria-expanded="openSelect === 'codec-mode'"
-                  :aria-label="`${t('options.codecMode')} ${selectLabel(base64Options.mode, base64ModeChoices)}`"
-                  @click="toggleCustomSelect('codec-mode')"
-                >
-                  <span>{{ selectLabel(base64Options.mode, base64ModeChoices) }}</span>
-                  <span class="custom-select-arrow" aria-hidden="true"></span>
-                </button>
-                <div v-if="openSelect === 'codec-mode'" class="custom-select-menu" role="listbox">
-                  <button
-                    v-for="choice in base64ModeChoices"
-                    :key="choice.value"
-                    class="custom-select-option"
-                    :class="{ active: base64Options.mode === choice.value }"
-                    type="button"
-                    role="option"
-                    :aria-selected="base64Options.mode === choice.value"
-                    @click="base64Options.mode = choice.value as Base64RunOptions['mode']; closeCustomSelect()"
-                  >
-                    {{ choice.label }}
-                  </button>
-                </div>
-              </div>
+              <AnimalSelect
+                v-model="base64Options.mode"
+                :label="t('options.codecMode')"
+                :options="base64ModeChoices"
+              />
             </label>
 
             <label class="field">
               <span>{{ t('options.charset') }}</span>
-              <div class="custom-select" @click.stop>
-                <button
-                  class="custom-select-trigger"
-                  :class="{ open: openSelect === 'charset' }"
-                  type="button"
-                  aria-haspopup="listbox"
-                  :aria-expanded="openSelect === 'charset'"
-                  :aria-label="`${t('options.charset')} ${selectLabel(base64Options.charset, charsetChoices)}`"
-                  @click="toggleCustomSelect('charset')"
-                >
-                  <span>{{ selectLabel(base64Options.charset, charsetChoices) }}</span>
-                  <span class="custom-select-arrow" aria-hidden="true"></span>
-                </button>
-                <div v-if="openSelect === 'charset'" class="custom-select-menu" role="listbox">
-                  <button
-                    v-for="choice in charsetChoices"
-                    :key="choice.value"
-                    class="custom-select-option"
-                    :class="{ active: base64Options.charset === choice.value }"
-                    type="button"
-                    role="option"
-                    :aria-selected="base64Options.charset === choice.value"
-                    @click="base64Options.charset = choice.value as Base64RunOptions['charset']; closeCustomSelect()"
-                  >
-                    {{ choice.label }}
-                  </button>
-                </div>
-              </div>
+              <AnimalSelect
+                v-model="base64Options.charset"
+                :label="t('options.charset')"
+                :options="charsetChoices"
+              />
             </label>
             </template>
 
             <template v-else-if="selectedTool === 'timestamp'">
             <label class="field">
               <span>{{ t('options.timestampMode') }}</span>
-              <div class="custom-select" @click.stop>
-                <button
-                  class="custom-select-trigger"
-                  :class="{ open: openSelect === 'timestamp-mode' }"
-                  type="button"
-                  aria-haspopup="listbox"
-                  :aria-expanded="openSelect === 'timestamp-mode'"
-                  :aria-label="`${t('options.timestampMode')} ${selectLabel(timestampOptions.mode, timestampModeChoices)}`"
-                  @click="toggleCustomSelect('timestamp-mode')"
-                >
-                  <span>{{ selectLabel(timestampOptions.mode, timestampModeChoices) }}</span>
-                  <span class="custom-select-arrow" aria-hidden="true"></span>
-                </button>
-                <div v-if="openSelect === 'timestamp-mode'" class="custom-select-menu" role="listbox">
-                  <button
-                    v-for="choice in timestampModeChoices"
-                    :key="choice.value"
-                    class="custom-select-option"
-                    :class="{ active: timestampOptions.mode === choice.value }"
-                    type="button"
-                    role="option"
-                    :aria-selected="timestampOptions.mode === choice.value"
-                    @click="timestampOptions.mode = choice.value as TimestampRunOptions['mode']; useSampleInput(); closeCustomSelect()"
-                  >
-                    {{ choice.label }}
-                  </button>
-                </div>
-              </div>
+              <AnimalSelect
+                v-model="timestampOptions.mode"
+                :label="t('options.timestampMode')"
+                :options="timestampModeChoices"
+                @change="useSampleInput"
+              />
             </label>
             </template>
 
             <template v-else-if="selectedTool === 'text-hash'">
             <label class="field">
               <span>{{ t('options.hashAlgorithm') }}</span>
-              <div class="custom-select" @click.stop>
-                <button
-                  class="custom-select-trigger"
-                  :class="{ open: openSelect === 'hash-algorithm' }"
-                  type="button"
-                  aria-haspopup="listbox"
-                  :aria-expanded="openSelect === 'hash-algorithm'"
-                  :aria-label="`${t('options.hashAlgorithm')} ${selectLabel(textHashOptions.algorithm, hashAlgorithmChoices)}`"
-                  @click="toggleCustomSelect('hash-algorithm')"
-                >
-                  <span>{{ selectLabel(textHashOptions.algorithm, hashAlgorithmChoices) }}</span>
-                  <span class="custom-select-arrow" aria-hidden="true"></span>
-                </button>
-                <div v-if="openSelect === 'hash-algorithm'" class="custom-select-menu" role="listbox">
-                  <button
-                    v-for="choice in hashAlgorithmChoices"
-                    :key="choice.value"
-                    class="custom-select-option"
-                    :class="{ active: textHashOptions.algorithm === choice.value }"
-                    type="button"
-                    role="option"
-                    :aria-selected="textHashOptions.algorithm === choice.value"
-                    @click="textHashOptions.algorithm = choice.value as TextHashRunOptions['algorithm']; closeCustomSelect()"
-                  >
-                    {{ choice.label }}
-                  </button>
-                </div>
-              </div>
+              <AnimalSelect
+                v-model="textHashOptions.algorithm"
+                :label="t('options.hashAlgorithm')"
+                :options="hashAlgorithmChoices"
+              />
             </label>
             </template>
 
             <template v-else>
             <label class="field">
               <span>{{ t('options.regexPattern') }}</span>
-              <textarea
+              <AnimalTextarea
                 v-model="regexOptions.pattern"
                 class="pattern-input"
                 rows="4"
@@ -1414,20 +1260,14 @@ function restoreExecution(item: ExecutionSummary) {
 
             <fieldset class="field flag-group">
               <legend>{{ t('options.regexFlags') }}</legend>
-              <label
+              <AnimalSwitch
                 v-for="flag in regexFlagOptions"
                 :key="flag.value"
-                class="switch-row compact"
-              >
-                <span>
-                  <strong>{{ t(flag.labelKey) }}</strong>
-                </span>
-                <input
-                  type="checkbox"
-                  :checked="regexOptions.flags.includes(flag.value)"
-                  @change="toggleRegexFlag(flag.value)"
-                />
-              </label>
+                :model-value="regexOptions.flags.includes(flag.value)"
+                :label="t(flag.labelKey)"
+                compact
+                @update:model-value="toggleRegexFlag(flag.value)"
+              />
             </fieldset>
 
             <label class="field">
@@ -1437,34 +1277,11 @@ function restoreExecution(item: ExecutionSummary) {
 
             <label class="field">
               <span>{{ t('options.timeoutMs') }}</span>
-              <div class="custom-select" @click.stop>
-                <button
-                  class="custom-select-trigger"
-                  :class="{ open: openSelect === 'regex-timeout' }"
-                  type="button"
-                  aria-haspopup="listbox"
-                  :aria-expanded="openSelect === 'regex-timeout'"
-                  :aria-label="`${t('options.timeoutMs')} ${selectLabel(regexOptions.timeoutMs, regexTimeoutChoices)}`"
-                  @click="toggleCustomSelect('regex-timeout')"
-                >
-                  <span>{{ selectLabel(regexOptions.timeoutMs, regexTimeoutChoices) }}</span>
-                  <span class="custom-select-arrow" aria-hidden="true"></span>
-                </button>
-                <div v-if="openSelect === 'regex-timeout'" class="custom-select-menu" role="listbox">
-                  <button
-                    v-for="choice in regexTimeoutChoices"
-                    :key="choice.value"
-                    class="custom-select-option"
-                    :class="{ active: regexOptions.timeoutMs === choice.value }"
-                    type="button"
-                    role="option"
-                    :aria-selected="regexOptions.timeoutMs === choice.value"
-                    @click="regexOptions.timeoutMs = Number(choice.value); closeCustomSelect()"
-                  >
-                    {{ choice.label }}
-                  </button>
-                </div>
-              </div>
+              <AnimalSelect
+                v-model="regexOptions.timeoutMs"
+                :label="t('options.timeoutMs')"
+                :options="regexTimeoutChoices"
+              />
             </label>
             </template>
 
@@ -1476,7 +1293,7 @@ function restoreExecution(item: ExecutionSummary) {
             <div v-if="isSignedIn" class="history-list">
               <span>{{ t('options.recentRuns') }}</span>
               <p v-if="recentExecutions.length === 0">{{ t('options.noSavedRuns') }}</p>
-              <button
+              <AnimalButton
                 v-for="item in recentExecutions"
                 :key="item.id"
                 class="history-item"
@@ -1485,10 +1302,10 @@ function restoreExecution(item: ExecutionSummary) {
               >
                 <strong>{{ item.tool }}</strong>
                 <small>{{ item.status }} · {{ item.duration_ms ?? 0 }}ms</small>
-              </button>
+              </AnimalButton>
             </div>
           </div>
-        </aside>
+        </AnimalPanel>
       </section>
     </main>
   </div>
