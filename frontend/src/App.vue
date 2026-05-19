@@ -25,11 +25,15 @@ import {
   fetchFavorites,
   fetchMe,
   fetchPreferences,
+  fetchSessions,
   isTerminalExecutionStatus,
   logout,
+  revokeOtherSessions,
   savePreferences,
   setFavorite,
+  updateProfile,
   type ExecutionSummary,
+  type AccountSession,
   type AuthOptions,
   type UserProfile
 } from './api/platform'
@@ -71,11 +75,15 @@ const durationMs = ref<number | null>(null)
 const currentUser = ref<UserProfile | null>(null)
 const favorites = ref<string[]>([])
 const executions = ref<ExecutionSummary[]>([])
+const accountSessions = ref<AccountSession[]>([])
 const authBusy = ref(false)
 const authDialogOpen = ref(false)
 const authLoaded = ref(false)
 const authOptions = ref<AuthOptions>({ dev_login: false, github: false, email: false })
 const authError = ref('')
+const accountNotice = ref('')
+const profileName = ref('')
+const profileAvatar = ref('')
 const options = ref<JsonRunOptions>({
   indent: 2,
   sortKeys: true,
@@ -244,6 +252,23 @@ const hasOutput = computed(() => output.value.length > 0)
 const isSignedIn = computed(() => currentUser.value !== null)
 const favoriteCurrentTool = computed(() => favorites.value.includes(selectedTool.value))
 const displayName = computed(() => currentUser.value?.display_name || currentUser.value?.email || '')
+const avatarInitial = computed(() => displayName.value.trim().charAt(0).toUpperCase() || 'Y')
+const accountTitle = computed(() => (isSignedIn.value ? t('account.title') : t('auth.dialogTitle')))
+const accountIdentities = computed(() => currentUser.value?.identities ?? [])
+const activeSessionCount = computed(
+  () => accountSessions.value.filter((session) => !session.revoked_at).length
+)
+const otherActiveSessionCount = computed(
+  () => accountSessions.value.filter((session) => !session.revoked_at && !session.is_current).length
+)
+const profileDirty = computed(() => {
+  const user = currentUser.value
+  if (!user) return false
+  return (
+    profileName.value.trim() !== user.display_name ||
+    profileAvatar.value.trim() !== (user.avatar_url || '')
+  )
+})
 const preferredAuthMethod = computed(() => preferredLoginMethod(authOptions.value))
 const stateLabel = computed(() => {
   if (runState.value === 'queued') return t('status.queued')
@@ -504,6 +529,7 @@ async function loadAccount() {
   try {
     currentUser.value = await fetchMe()
     if (currentUser.value) {
+      syncProfileForm()
       await loadUserResources()
     }
   } catch {
@@ -527,17 +553,24 @@ async function openAuthDialog() {
   commandOpen.value = false
   helpOpen.value = false
   authError.value = ''
+  accountNotice.value = ''
+  if (currentUser.value) {
+    syncProfileForm()
+    void refreshSessions()
+  }
   await loadAuthOptions()
 }
 
 async function loadUserResources() {
-  const [favoriteList, preferences, executionList] = await Promise.all([
+  const [favoriteList, preferences, executionList, sessions] = await Promise.all([
     fetchFavorites(),
     fetchPreferences(),
-    fetchExecutions()
+    fetchExecutions(),
+    fetchSessions()
   ])
   favorites.value = favoriteList
   executions.value = executionList
+  accountSessions.value = sessions
 
   const jsonOptions = preferences.tool_options?.['json-format'] as Partial<JsonRunOptions> | undefined
   if (jsonOptions) {
@@ -553,6 +586,39 @@ async function loadUserResources() {
   }
 }
 
+function syncProfileForm() {
+  profileName.value = currentUser.value?.display_name ?? ''
+  profileAvatar.value = currentUser.value?.avatar_url ?? ''
+}
+
+async function refreshSessions() {
+  if (!currentUser.value) return
+  try {
+    accountSessions.value = await fetchSessions()
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : t('account.sessionsUnavailable')
+  }
+}
+
+function formatDateTime(value: string): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(new Date(value))
+  } catch {
+    return value
+  }
+}
+
+function providerLabel(provider: string): string {
+  if (provider === 'github') return 'GitHub'
+  if (provider === 'dev') return t('account.localProvider')
+  return provider
+}
+
 async function signIn() {
   await openAuthDialog()
 }
@@ -562,6 +628,7 @@ async function signInWithDev() {
   authError.value = ''
   try {
     currentUser.value = await devLogin()
+    syncProfileForm()
     await loadUserResources()
     authDialogOpen.value = false
   } catch (error) {
@@ -584,6 +651,42 @@ async function signOut() {
     currentUser.value = null
     favorites.value = []
     executions.value = []
+    accountSessions.value = []
+    authDialogOpen.value = false
+  } finally {
+    authBusy.value = false
+  }
+}
+
+async function saveProfile() {
+  if (!currentUser.value) return
+  authBusy.value = true
+  authError.value = ''
+  accountNotice.value = ''
+  try {
+    currentUser.value = await updateProfile({
+      display_name: profileName.value.trim(),
+      avatar_url: profileAvatar.value.trim()
+    })
+    syncProfileForm()
+    accountNotice.value = t('account.profileSaved')
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : t('account.profileSaveFailed')
+  } finally {
+    authBusy.value = false
+  }
+}
+
+async function signOutOtherSessions() {
+  if (!currentUser.value) return
+  authBusy.value = true
+  authError.value = ''
+  accountNotice.value = ''
+  try {
+    accountSessions.value = await revokeOtherSessions()
+    accountNotice.value = t('account.otherSessionsRevoked')
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : t('account.sessionsUpdateFailed')
   } finally {
     authBusy.value = false
   }
@@ -863,7 +966,7 @@ function restoreExecution(item: ExecutionSummary) {
         >
           {{ t('auth.signIn') }}
         </AnimalButton>
-        <AnimalButton v-else class="user-pill" :disabled="authBusy" @click="signOut">
+        <AnimalButton v-else class="user-pill" :disabled="authBusy" @click="openAuthDialog">
           {{ displayName }}
         </AnimalButton>
       </div>
@@ -954,11 +1057,11 @@ function restoreExecution(item: ExecutionSummary) {
         </div>
     </AnimalDialog>
 
-    <AnimalDialog v-if="authDialogOpen" panel-class="auth-dialog" :label="t('auth.dialogTitle')" @close="closeOverlays">
+    <AnimalDialog v-if="authDialogOpen" panel-class="auth-dialog" :label="accountTitle" @close="closeOverlays">
         <header class="dialog-head">
           <div>
-            <strong>{{ t('auth.dialogTitle') }}</strong>
-            <span>{{ isSignedIn ? displayName : t('auth.dialogSubtitle') }}</span>
+            <strong>{{ accountTitle }}</strong>
+            <span>{{ isSignedIn ? currentUser?.email : t('auth.dialogSubtitle') }}</span>
           </div>
           <AnimalButton class="icon-button" variant="icon" :aria-label="t('actions.close')" @click="closeOverlays">
             ×
@@ -966,13 +1069,104 @@ function restoreExecution(item: ExecutionSummary) {
         </header>
 
         <div class="auth-body">
-          <div v-if="isSignedIn" class="auth-state">
-            <strong>{{ t('auth.signedInAs') }}</strong>
-            <span>{{ displayName }}</span>
-            <AnimalButton class="secondary-button" :disabled="authBusy" @click="signOut">
-              {{ t('auth.signOut') }}
-            </AnimalButton>
-          </div>
+          <template v-if="isSignedIn && currentUser">
+            <section class="account-hero">
+              <img
+                v-if="currentUser.avatar_url"
+                class="account-avatar"
+                :src="currentUser.avatar_url"
+                alt=""
+              />
+              <span v-else class="account-avatar">{{ avatarInitial }}</span>
+              <div>
+                <strong>{{ displayName }}</strong>
+                <span>{{ currentUser.email }}</span>
+              </div>
+            </section>
+
+            <div class="account-metrics">
+              <span>
+                <strong>{{ favoriteToolItems.length }}</strong>
+                <small>{{ t('account.favorites') }}</small>
+              </span>
+              <span>
+                <strong>{{ executions.length }}</strong>
+                <small>{{ t('account.history') }}</small>
+              </span>
+              <span>
+                <strong>{{ activeSessionCount }}</strong>
+                <small>{{ t('account.activeSessions') }}</small>
+              </span>
+            </div>
+
+            <section class="account-section">
+              <div class="section-label">{{ t('account.profile') }}</div>
+              <label class="field account-field">
+                <span>{{ t('account.displayName') }}</span>
+                <input v-model="profileName" maxlength="160" type="text" />
+              </label>
+              <label class="field account-field">
+                <span>{{ t('account.avatarUrl') }}</span>
+                <input v-model="profileAvatar" maxlength="2048" type="url" />
+              </label>
+              <AnimalButton
+                class="primary-button"
+                variant="primary"
+                :disabled="authBusy || !profileName.trim() || !profileDirty"
+                @click="saveProfile"
+              >
+                {{ authBusy && profileDirty ? t('account.savingProfile') : t('account.saveProfile') }}
+              </AnimalButton>
+            </section>
+
+            <section class="account-section">
+              <div class="section-label">{{ t('account.providers') }}</div>
+              <p v-if="accountIdentities.length === 0" class="empty-copy">
+                {{ t('account.noProviders') }}
+              </p>
+              <div v-else class="account-list">
+                <div v-for="identity in accountIdentities" :key="identity.provider" class="account-row">
+                  <span>
+                    <strong>{{ providerLabel(identity.provider) }}</strong>
+                    <small>{{ identity.provider_email || currentUser.email }}</small>
+                  </span>
+                  <small>{{ formatDateTime(identity.created_at) }}</small>
+                </div>
+              </div>
+            </section>
+
+            <section class="account-section">
+              <div class="account-section-head">
+                <span class="section-label">{{ t('account.sessions') }}</span>
+                <AnimalButton
+                  class="secondary-button compact-button"
+                  :disabled="authBusy || otherActiveSessionCount === 0"
+                  @click="signOutOtherSessions"
+                >
+                  {{ t('account.revokeOthers') }}
+                </AnimalButton>
+              </div>
+              <div class="account-list">
+                <div v-for="session in accountSessions" :key="session.id" class="account-row">
+                  <span>
+                    <strong>
+                      {{ session.is_current ? t('account.currentSession') : t('account.session') }}
+                    </strong>
+                    <small>{{ formatDateTime(session.created_at) }}</small>
+                  </span>
+                  <small :class="{ revoked: session.revoked_at }">
+                    {{ session.revoked_at ? t('account.revoked') : t('account.active') }}
+                  </small>
+                </div>
+              </div>
+            </section>
+
+            <section class="account-section account-actions">
+              <AnimalButton class="secondary-button danger-button" :disabled="authBusy" @click="signOut">
+                {{ t('auth.signOut') }}
+              </AnimalButton>
+            </section>
+          </template>
 
           <template v-else>
             <AnimalButton
@@ -1009,6 +1203,7 @@ function restoreExecution(item: ExecutionSummary) {
             <p class="empty-copy">{{ t('auth.emailReserved') }}</p>
           </template>
 
+          <p v-if="accountNotice" class="auth-success">{{ accountNotice }}</p>
           <p v-if="authError" class="auth-error">{{ authError }}</p>
         </div>
     </AnimalDialog>

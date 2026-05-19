@@ -1,16 +1,24 @@
 import secrets
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import optional_current_user
-from app.auth.sessions import clear_session_cookie, set_session_cookie, sign_session
+from app.auth.sessions import (
+    SESSION_COOKIE,
+    clear_session_cookie,
+    read_session,
+    set_session_cookie,
+    sign_session,
+)
 from app.config import get_settings
-from app.db.models import User
+from app.db.models import AuthIdentity, User, UserSession, now_utc
 from app.db.session import get_db_session
 from app.errors import ApiError
 from app.observability import AUTH_LOGGER
@@ -34,15 +42,40 @@ class AuthOptionsResponse(BaseModel):
     email: bool
 
 
-def serialize_user(user: User | None) -> dict[str, Any] | None:
+def serialize_user(
+    user: User | None,
+    identities: Iterable[AuthIdentity] | None = None,
+) -> dict[str, Any] | None:
     if user is None:
         return None
+    identity_list = list(identities) if identities is not None else list(
+        user.__dict__.get("identities") or []
+    )
     return {
         "id": user.id,
         "email": user.email,
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
+        "created_at": user.created_at.isoformat(),
+        "updated_at": user.updated_at.isoformat(),
+        "identities": [
+            {
+                "provider": identity.provider,
+                "provider_email": identity.provider_email,
+                "created_at": identity.created_at.isoformat(),
+            }
+            for identity in sorted(identity_list, key=lambda item: item.created_at)
+        ],
     }
+
+
+async def get_user_identities(db: AsyncSession, user: User) -> list[AuthIdentity]:
+    result = await db.execute(
+        select(AuthIdentity)
+        .where(AuthIdentity.user_id == user.id)
+        .order_by(AuthIdentity.created_at.asc())
+    )
+    return list(result.scalars())
 
 
 def github_callback_url() -> str:
@@ -82,8 +115,12 @@ def provider_unavailable_error(request: Request, exc: httpx.HTTPError) -> ApiErr
 
 
 @router.get("/me")
-async def get_me(user: User | None = Depends(optional_current_user)) -> dict[str, Any]:
-    return {"user": serialize_user(user)}
+async def get_me(
+    user: User | None = Depends(optional_current_user),
+    db: AsyncSession | None = Depends(get_db_session),
+) -> dict[str, Any]:
+    identities = await get_user_identities(db, user) if user is not None and db is not None else []
+    return {"user": serialize_user(user, identities)}
 
 
 @router.get("/options")
@@ -113,14 +150,38 @@ async def dev_login(
         )
 
     user = await get_or_create_user(db, email=str(payload.email), display_name=payload.name)
+    await link_identity(
+        db,
+        user=user,
+        provider="dev",
+        provider_user_id=str(payload.email),
+        provider_email=str(payload.email),
+    )
     session = await create_user_session(db, user)
+    identities = await get_user_identities(db, user)
     await db.commit()
     set_session_cookie(response, sign_session(user.id, session.id))
-    return {"user": serialize_user(user)}
+    return {"user": serialize_user(user, identities)}
 
 
 @router.post("/logout")
-async def logout(response: Response) -> dict[str, str]:
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession | None = Depends(get_db_session),
+) -> dict[str, str]:
+    session_data = read_session(request.cookies.get(SESSION_COOKIE))
+    if db is not None and session_data is not None:
+        result = await db.execute(
+            select(UserSession)
+            .where(UserSession.id == session_data["session_id"])
+            .where(UserSession.user_id == session_data["user_id"])
+            .where(UserSession.revoked_at.is_(None))
+        )
+        session = result.scalar_one_or_none()
+        if session is not None:
+            session.revoked_at = now_utc()
+            await db.commit()
     clear_session_cookie(response)
     return {"status": "ok"}
 

@@ -380,6 +380,64 @@ def test_dev_login_sets_session_and_current_user(test_app) -> None:
 
     assert me_response.status_code == 200
     assert me_response.json()["user"]["email"] == "dev@example.com"
+    assert me_response.json()["user"]["identities"][0]["provider"] == "dev"
+
+
+def test_logout_revokes_current_session(test_app) -> None:
+    with TestClient(test_app) as client:
+        client.post("/api/auth/dev-login", json={"email": "dev@example.com", "name": "Dev User"})
+        session_cookie = client.cookies.get("yukit_session")
+
+        logout_response = client.post("/api/auth/logout")
+        client.cookies.set("yukit_session", session_cookie)
+        me_response = client.get("/api/auth/me")
+
+    assert logout_response.status_code == 200
+    assert me_response.status_code == 200
+    assert me_response.json()["user"] is None
+
+
+def test_profile_and_session_management(test_app) -> None:
+    with TestClient(test_app) as client:
+        client.post("/api/auth/dev-login", json={"email": "dev@example.com", "name": "Dev User"})
+
+        profile_response = client.put(
+            "/api/me/profile",
+            json={
+                "display_name": "YuKit User",
+                "avatar_url": "https://cdn.example/avatar.png",
+            },
+        )
+        sessions_response = client.get("/api/me/sessions")
+        me_response = client.get("/api/auth/me")
+
+    assert profile_response.status_code == 200
+    assert profile_response.json()["user"]["display_name"] == "YuKit User"
+    assert me_response.json()["user"]["avatar_url"] == "https://cdn.example/avatar.png"
+    sessions = sessions_response.json()["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["is_current"] is True
+    assert sessions[0]["revoked_at"] is None
+
+
+def test_revoke_other_sessions(test_app) -> None:
+    with TestClient(test_app) as first_client, TestClient(test_app) as second_client:
+        first_client.post(
+            "/api/auth/dev-login",
+            json={"email": "dev@example.com", "name": "Dev User"},
+        )
+        second_client.post(
+            "/api/auth/dev-login",
+            json={"email": "dev@example.com", "name": "Dev User"},
+        )
+
+        revoke_response = first_client.post("/api/me/sessions/revoke-others")
+        second_me_response = second_client.get("/api/auth/me")
+
+    assert revoke_response.status_code == 200
+    sessions = revoke_response.json()["sessions"]
+    assert len([session for session in sessions if session["revoked_at"] is None]) == 1
+    assert second_me_response.json()["user"] is None
 
 
 def test_auth_options_reports_local_login_availability(test_app, monkeypatch) -> None:

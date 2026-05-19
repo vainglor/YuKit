@@ -7,6 +7,24 @@ export type UserProfile = {
   email: string
   display_name: string
   avatar_url: string
+  created_at: string
+  updated_at: string
+  identities: AccountIdentity[]
+}
+
+export type AccountIdentity = {
+  provider: string
+  provider_email: string
+  created_at: string
+}
+
+export type AccountSession = {
+  id: string
+  created_at: string
+  updated_at: string
+  expires_at: string
+  revoked_at: string | null
+  is_current: boolean
 }
 
 export type Preferences = {
@@ -92,6 +110,29 @@ export async function devLogin(): Promise<UserProfile> {
 
 export async function logout(): Promise<void> {
   await request('/auth/logout', { method: 'POST' })
+}
+
+export async function updateProfile(profile: {
+  display_name: string
+  avatar_url: string
+}): Promise<UserProfile> {
+  const body = await request<{ user: UserProfile }>('/me/profile', {
+    method: 'PUT',
+    body: JSON.stringify(profile)
+  })
+  return body.user
+}
+
+export async function fetchSessions(): Promise<AccountSession[]> {
+  const body = await request<{ sessions: AccountSession[] }>('/me/sessions')
+  return body.sessions
+}
+
+export async function revokeOtherSessions(): Promise<AccountSession[]> {
+  const body = await request<{ sessions: AccountSession[] }>('/me/sessions/revoke-others', {
+    method: 'POST'
+  })
+  return body.sessions
 }
 
 export async function fetchFavorites(): Promise<string[]> {

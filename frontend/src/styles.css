@@ -264,7 +264,7 @@ kbd {
 }
 
 .auth-dialog {
-  width: min(420px, 100%);
+  width: min(560px, 100%);
 }
 
 .dialog-head {
@@ -393,7 +393,8 @@ kbd {
 }
 
 .auth-warning,
-.auth-error {
+.auth-error,
+.auth-success {
   border-radius: var(--radius);
   padding: 8px 10px;
   font-size: 12px;
@@ -408,6 +409,137 @@ kbd {
 .auth-error {
   color: var(--danger);
   background: var(--danger-soft);
+}
+
+.auth-success {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.account-hero {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.account-avatar {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  object-fit: cover;
+  color: #fff;
+  background: #2563eb;
+  font-weight: 760;
+}
+
+.account-hero div,
+.account-row span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.account-hero strong,
+.account-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.account-hero span,
+.account-row small,
+.account-metrics small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.account-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-metrics span {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px;
+  display: grid;
+  gap: 2px;
+  background: var(--surface-subtle);
+}
+
+.account-metrics strong {
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.account-section {
+  display: grid;
+  gap: 8px;
+}
+
+.account-field input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.account-list {
+  display: grid;
+  gap: 6px;
+}
+
+.account-row {
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-subtle);
+}
+
+.account-section-head,
+.account-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compact-button {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.danger-button {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.revoked {
+  color: var(--danger);
 }
 
 .help-body p {
